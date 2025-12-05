@@ -1,0 +1,25 @@
+{
+    "version": 3,
+    "configurePresets": [
+        {
+            "name": "default",
+            "binaryDir": "${sourceDir}/build",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug"
+            },
+            "environment": {
+                "CUDAFLAGS": "-Xcompiler -U_GNU_SOURCE"
+            }
+        },
+        {
+            "name": "release",
+            "binaryDir": "${sourceDir}/build",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release"
+            },
+            "environment": {
+                "CUDAFLAGS": "-Xcompiler -U_GNU_SOURCE"
+            }
+        }
+    ]
+}
