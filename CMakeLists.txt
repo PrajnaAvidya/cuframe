@@ -14,6 +14,12 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Xcompiler -U_GNU_SOURCE")
 
 find_package(CUDAToolkit REQUIRED)
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(LIBAV REQUIRED IMPORTED_TARGET
+    libavformat
+    libavcodec
+    libavutil
+)
 
 enable_testing()
 
