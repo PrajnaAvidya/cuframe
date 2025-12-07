@@ -1,7 +1,9 @@
-# interface-only until we add real sources in chunk 3
-add_library(cuframe INTERFACE)
+add_library(cuframe STATIC
+    cuframe/cuda_utils.cpp
+    cuframe/device_buffer.cu
+)
 
-target_include_directories(cuframe INTERFACE
+target_include_directories(cuframe PUBLIC
     ${PROJECT_SOURCE_DIR}/include
 )
 
@@ -14,7 +16,7 @@ target_include_directories(nv_codec_headers INTERFACE
 # nvdec runtime (ships with nvidia driver)
 find_library(NVCUVID_LIB nvcuvid REQUIRED)
 
-target_link_libraries(cuframe INTERFACE
+target_link_libraries(cuframe PUBLIC
     nv_codec_headers
     PkgConfig::LIBAV
     ${NVCUVID_LIB}
