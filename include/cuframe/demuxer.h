@@ -2,6 +2,7 @@
 
 extern "C" {
 #include <libavcodec/avcodec.h>
+#include <libavcodec/bsf.h>
 #include <libavformat/avformat.h>
 }
 
@@ -36,6 +37,7 @@ public:
 
 private:
     AVFormatContext* fmt_ctx_ = nullptr;
+    AVBSFContext* bsf_ctx_ = nullptr;  // annex-b conversion filter (h264/hevc in mp4/mkv)
     int video_stream_idx_ = -1;
     VideoInfo info_;
 };

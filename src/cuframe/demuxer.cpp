@@ -1,5 +1,6 @@
 #include "cuframe/demuxer.h"
 
+#include <cstring>
 #include <stdexcept>
 #include <string>
 
@@ -44,9 +45,31 @@ Demuxer::Demuxer(const std::string& filepath) {
             codecpar->extradata + codecpar->extradata_size
         );
     }
+
+    // nvdec parser expects annex-b format (start code prefixed NALUs).
+    // mp4/mkv/flv containers store h264/hevc in AVCC format (length prefixed).
+    // apply bitstream filter to convert.
+    const char* fmt_name = fmt_ctx_->iformat->long_name;
+    bool is_mp4_like = (strstr(fmt_name, "QuickTime") || strstr(fmt_name, "Matroska")
+                        || strstr(fmt_name, "FLV"));
+
+    const char* bsf_name = nullptr;
+    if (is_mp4_like && info_.codec_id == AV_CODEC_ID_H264)
+        bsf_name = "h264_mp4toannexb";
+    else if (is_mp4_like && info_.codec_id == AV_CODEC_ID_HEVC)
+        bsf_name = "hevc_mp4toannexb";
+
+    if (bsf_name) {
+        const AVBitStreamFilter* bsf = av_bsf_get_by_name(bsf_name);
+        if (!bsf) throw std::runtime_error(std::string(bsf_name) + " bsf not found");
+        av_bsf_alloc(bsf, &bsf_ctx_);
+        avcodec_parameters_copy(bsf_ctx_->par_in, codecpar);
+        av_bsf_init(bsf_ctx_);
+    }
 }
 
 Demuxer::~Demuxer() {
+    if (bsf_ctx_) av_bsf_free(&bsf_ctx_);
     avformat_close_input(&fmt_ctx_);
 }
 
@@ -64,7 +87,17 @@ bool Demuxer::read_packet(AVPacket* packet) {
             throw std::runtime_error(std::string("av_read_frame error: ") + errbuf);
         }
 
-        if (packet->stream_index == video_stream_idx_) return true;
+        if (packet->stream_index == video_stream_idx_) {
+            if (bsf_ctx_) {
+                // convert AVCC -> annex B
+                if (av_bsf_send_packet(bsf_ctx_, packet) < 0)
+                    throw std::runtime_error("av_bsf_send_packet failed");
+                av_packet_unref(packet);
+                if (av_bsf_receive_packet(bsf_ctx_, packet) < 0)
+                    throw std::runtime_error("av_bsf_receive_packet failed");
+            }
+            return true;
+        }
 
         // not our video stream, skip
         av_packet_unref(packet);
