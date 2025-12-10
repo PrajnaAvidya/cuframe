@@ -11,3 +11,7 @@ include(GoogleTest)
 add_executable(test_device_buffer test_device_buffer.cpp)
 target_link_libraries(test_device_buffer PRIVATE cuframe GTest::gtest_main)
 gtest_discover_tests(test_device_buffer)
+
+add_executable(test_demuxer test_demuxer.cpp)
+target_link_libraries(test_demuxer PRIVATE cuframe GTest::gtest_main)
+gtest_discover_tests(test_demuxer WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})

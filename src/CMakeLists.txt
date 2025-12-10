@@ -1,6 +1,7 @@
 add_library(cuframe STATIC
     cuframe/cuda_utils.cpp
     cuframe/device_buffer.cu
+    cuframe/demuxer.cpp
 )
 
 target_include_directories(cuframe PUBLIC
