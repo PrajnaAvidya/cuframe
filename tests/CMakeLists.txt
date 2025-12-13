@@ -15,3 +15,7 @@ gtest_discover_tests(test_device_buffer)
 add_executable(test_demuxer test_demuxer.cpp)
 target_link_libraries(test_demuxer PRIVATE cuframe GTest::gtest_main)
 gtest_discover_tests(test_demuxer WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+
+add_executable(test_decoder test_decoder.cpp)
+target_link_libraries(test_decoder PRIVATE cuframe GTest::gtest_main)
+gtest_discover_tests(test_decoder WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
