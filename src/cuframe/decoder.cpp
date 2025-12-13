@@ -18,7 +18,8 @@ cudaVideoCodec to_nvdec_codec(AVCodecID id) {
     }
 }
 
-Decoder::Decoder(const VideoInfo& info) {
+Decoder::Decoder(const VideoInfo& info, int pool_count)
+    : pool_count_(pool_count) {
     cuInit(0);
     // force runtime context creation so cuCtxGetCurrent works
     cudaFree(0);
@@ -77,8 +78,9 @@ int Decoder::height() const { return height_; }
 // --- callbacks ---
 
 int Decoder::on_sequence(CUVIDEOFORMAT* fmt) {
-    // resolution change mid-stream: tear down old decoder
+    // resolution change mid-stream: tear down old decoder + pool
     if (decoder_) {
+        pool_.reset();
         cuCtxPushCurrent(cu_ctx_);
         cuvidDestroyDecoder(decoder_);
         cuCtxPopCurrent(nullptr);
@@ -143,7 +145,17 @@ int Decoder::on_display(CUVIDPARSERDISPINFO* disp) {
     unsigned int chroma_height = (height_ + 1) / 2;
     size_t frame_size = static_cast<size_t>(src_pitch) * (luma_height + chroma_height);
 
-    DeviceBuffer buf(frame_size);
+    // lazy pool creation — need actual src_pitch from first mapped frame
+    if (!pool_) {
+        pool_ = std::make_unique<FramePool>(frame_size, pool_count_);
+    }
+
+    auto buf = pool_->acquire();
+    if (!buf) {
+        CUFRAME_CU_CHECK(cuvidUnmapVideoFrame(decoder_, src_ptr));
+        cuCtxPopCurrent(nullptr);
+        throw std::runtime_error("frame pool exhausted");
+    }
 
     // copy luma plane
     CUDA_MEMCPY2D cp = {};
@@ -151,7 +163,7 @@ int Decoder::on_display(CUVIDPARSERDISPINFO* disp) {
     cp.srcDevice = src_ptr;
     cp.srcPitch = src_pitch;
     cp.dstMemoryType = CU_MEMORYTYPE_DEVICE;
-    cp.dstDevice = reinterpret_cast<CUdeviceptr>(buf.data());
+    cp.dstDevice = reinterpret_cast<CUdeviceptr>(buf->data());
     cp.dstPitch = src_pitch;
     cp.WidthInBytes = width_;  // NV12 luma: 1 byte per pixel
     cp.Height = luma_height;
@@ -159,7 +171,7 @@ int Decoder::on_display(CUVIDPARSERDISPINFO* disp) {
 
     // copy chroma plane (interleaved UV, offset by aligned surface height)
     cp.srcDevice = src_ptr + src_pitch * ((surface_height_ + 1) & ~1u);
-    cp.dstDevice = reinterpret_cast<CUdeviceptr>(buf.data()) + src_pitch * luma_height;
+    cp.dstDevice = reinterpret_cast<CUdeviceptr>(buf->data()) + src_pitch * luma_height;
     cp.WidthInBytes = width_;  // NV12 chroma: U+V interleaved, width bytes
     cp.Height = chroma_height;
     CUFRAME_CU_CHECK(cuMemcpy2DAsync(&cp, nullptr));

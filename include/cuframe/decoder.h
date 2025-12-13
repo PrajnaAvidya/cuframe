@@ -3,16 +3,17 @@
 #include <cuda.h>
 #include <cuviddec.h>
 #include <nvcuvid.h>
-#include "cuframe/device_buffer.h"
+#include "cuframe/frame_pool.h"
 #include "cuframe/demuxer.h"
 
+#include <memory>
 #include <vector>
 #include <cstdint>
 
 namespace cuframe {
 
 struct DecodedFrame {
-    DeviceBuffer buffer;    // owns NV12 data in GPU memory
+    PooledBuffer buffer;    // borrows NV12 data from pool, auto-returns
     int width = 0;
     int height = 0;
     unsigned int pitch = 0; // row stride in bytes (from cuvidMapVideoFrame)
@@ -21,7 +22,7 @@ struct DecodedFrame {
 
 class Decoder {
 public:
-    explicit Decoder(const VideoInfo& info);
+    explicit Decoder(const VideoInfo& info, int pool_count = 8);
     ~Decoder();
 
     Decoder(const Decoder&) = delete;
@@ -55,6 +56,8 @@ private:
     int height_ = 0;
     unsigned int surface_height_ = 0;  // coded height (may differ from display)
 
+    int pool_count_ = 8;
+    std::unique_ptr<FramePool> pool_;
     std::vector<DecodedFrame> pending_frames_;
 };
 

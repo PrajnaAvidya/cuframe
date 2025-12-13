@@ -3,6 +3,7 @@ add_library(cuframe STATIC
     cuframe/device_buffer.cu
     cuframe/demuxer.cpp
     cuframe/decoder.cpp
+    cuframe/frame_pool.cpp
 )
 
 target_include_directories(cuframe PUBLIC
