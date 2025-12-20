@@ -18,6 +18,7 @@ struct DecodedFrame {
     int height = 0;
     unsigned int pitch = 0; // row stride in bytes (from cuvidMapVideoFrame)
     int64_t timestamp = 0;
+    CUstream stream = nullptr;  // stream the frame data was produced on
 };
 
 class Decoder {
@@ -49,6 +50,7 @@ private:
     int on_display(CUVIDPARSERDISPINFO* disp);
 
     CUcontext cu_ctx_ = nullptr;
+    CUstream stream_ = nullptr;
     CUvideoparser parser_ = nullptr;
     CUvideodecoder decoder_ = nullptr;
 

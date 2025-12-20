@@ -24,6 +24,7 @@ Decoder::Decoder(const VideoInfo& info, int pool_count)
     // force runtime context creation so cuCtxGetCurrent works
     cudaFree(0);
     CUFRAME_CU_CHECK(cuCtxGetCurrent(&cu_ctx_));
+    CUFRAME_CU_CHECK(cuStreamCreate(&stream_, CU_STREAM_DEFAULT));
 
     CUVIDPARSERPARAMS parser_params = {};
     parser_params.CodecType = to_nvdec_codec(info.codec_id);
@@ -39,6 +40,7 @@ Decoder::Decoder(const VideoInfo& info, int pool_count)
 
 Decoder::~Decoder() {
     if (parser_) cuvidDestroyVideoParser(parser_);
+    if (stream_) cuStreamDestroy(stream_);
     if (decoder_) {
         cuCtxPushCurrent(cu_ctx_);
         cuvidDestroyDecoder(decoder_);
@@ -165,24 +167,23 @@ int Decoder::on_display(CUVIDPARSERDISPINFO* disp) {
     cp.dstMemoryType = CU_MEMORYTYPE_DEVICE;
     cp.dstDevice = reinterpret_cast<CUdeviceptr>(buf->data());
     cp.dstPitch = src_pitch;
-    cp.WidthInBytes = width_;  // NV12 luma: 1 byte per pixel
+    cp.WidthInBytes = src_pitch;  // copy full pitched rows (no uninitialized gaps)
     cp.Height = luma_height;
-    CUFRAME_CU_CHECK(cuMemcpy2DAsync(&cp, nullptr));
+    CUFRAME_CU_CHECK(cuMemcpy2DAsync(&cp, stream_));
 
     // copy chroma plane (interleaved UV, offset by aligned surface height)
     cp.srcDevice = src_ptr + src_pitch * ((surface_height_ + 1) & ~1u);
     cp.dstDevice = reinterpret_cast<CUdeviceptr>(buf->data()) + src_pitch * luma_height;
-    cp.WidthInBytes = width_;  // NV12 chroma: U+V interleaved, width bytes
     cp.Height = chroma_height;
-    CUFRAME_CU_CHECK(cuMemcpy2DAsync(&cp, nullptr));
+    CUFRAME_CU_CHECK(cuMemcpy2DAsync(&cp, stream_));
 
-    CUFRAME_CU_CHECK(cuStreamSynchronize(nullptr));
+    CUFRAME_CU_CHECK(cuStreamSynchronize(stream_));
     CUFRAME_CU_CHECK(cuvidUnmapVideoFrame(decoder_, src_ptr));
 
     cuCtxPopCurrent(nullptr);
 
     pending_frames_.push_back(DecodedFrame{
-        std::move(buf), width_, height_, src_pitch, disp->timestamp
+        std::move(buf), width_, height_, src_pitch, disp->timestamp, stream_
     });
 
     return 1;
