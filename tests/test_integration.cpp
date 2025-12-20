@@ -107,6 +107,6 @@ TEST_F(IntegrationTest, DumpFirstFrameNV12) {
     EXPECT_EQ(file_size, expected);
 
     printf("frame dumped to %s\n", dump_path.c_str());
-    printf("view with: ffplay -f rawvideo -pix_fmt nv12 -video_size %dx%d %s\n",
+    printf("view with: ffplay -f rawvideo -pixel_format nv12 -video_size %dx%d %s\n",
            w, h, dump_path.c_str());
 }

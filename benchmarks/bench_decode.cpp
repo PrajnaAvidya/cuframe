@@ -4,6 +4,7 @@
 extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
+#include <libavutil/log.h>
 }
 
 #include <chrono>
@@ -107,6 +108,9 @@ int main(int argc, char** argv) {
     }
 
     std::string path = argv[1];
+
+    // suppress ffmpeg log noise (eg sps_id errors from blu-ray 3D remuxes)
+    av_log_set_level(AV_LOG_FATAL);
 
     // probe video info for display
     cuframe::Demuxer probe(path);
