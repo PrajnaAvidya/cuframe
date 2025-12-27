@@ -31,3 +31,7 @@ gtest_discover_tests(test_integration WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
 add_executable(test_color_convert test_color_convert.cpp)
 target_link_libraries(test_color_convert PRIVATE cuframe GTest::gtest_main)
 gtest_discover_tests(test_color_convert WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+
+add_executable(test_resize test_resize.cpp)
+target_link_libraries(test_resize PRIVATE cuframe GTest::gtest_main)
+gtest_discover_tests(test_resize)
