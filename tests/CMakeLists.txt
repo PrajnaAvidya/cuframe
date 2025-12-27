@@ -27,3 +27,7 @@ gtest_discover_tests(test_frame_pool)
 add_executable(test_integration test_integration.cpp)
 target_link_libraries(test_integration PRIVATE cuframe GTest::gtest_main)
 gtest_discover_tests(test_integration WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+
+add_executable(test_color_convert test_color_convert.cpp)
+target_link_libraries(test_color_convert PRIVATE cuframe GTest::gtest_main)
+gtest_discover_tests(test_color_convert WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
