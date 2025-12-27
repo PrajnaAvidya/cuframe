@@ -4,6 +4,7 @@ add_library(cuframe STATIC
     cuframe/demuxer.cpp
     cuframe/decoder.cpp
     cuframe/frame_pool.cpp
+    cuframe/kernels/color_convert.cu
 )
 
 target_include_directories(cuframe PUBLIC
