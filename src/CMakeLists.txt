@@ -6,6 +6,7 @@ add_library(cuframe STATIC
     cuframe/frame_pool.cpp
     cuframe/kernels/color_convert.cu
     cuframe/kernels/resize.cu
+    cuframe/kernels/normalize.cu
 )
 
 target_include_directories(cuframe PUBLIC
