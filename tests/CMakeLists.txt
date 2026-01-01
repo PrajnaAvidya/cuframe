@@ -39,3 +39,7 @@ gtest_discover_tests(test_resize)
 add_executable(test_normalize test_normalize.cpp)
 target_link_libraries(test_normalize PRIVATE cuframe GTest::gtest_main)
 gtest_discover_tests(test_normalize)
+
+add_executable(test_gpu_frame_batch test_gpu_frame_batch.cpp)
+target_link_libraries(test_gpu_frame_batch PRIVATE cuframe GTest::gtest_main)
+gtest_discover_tests(test_gpu_frame_batch)
