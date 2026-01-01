@@ -8,6 +8,7 @@ add_library(cuframe STATIC
     cuframe/kernels/color_convert.cu
     cuframe/kernels/resize.cu
     cuframe/kernels/normalize.cu
+    cuframe/kernels/fused_preprocess.cu
 )
 
 target_include_directories(cuframe PUBLIC
