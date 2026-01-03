@@ -47,6 +47,9 @@ static BenchResult bench_separate(const std::string& path) {
     cuframe::Decoder decoder(info, 20);
     auto resize_params = cuframe::make_letterbox_params(src_w, src_h, DST_W, DST_H);
 
+    cudaStream_t stream;
+    CUFRAME_CUDA_CHECK(cudaStreamCreate(&stream));
+
     // pre-allocate per-frame intermediate buffers
     size_t rgb_bytes = 3 * src_w * src_h * sizeof(float);
     size_t out_bytes = 3 * DST_W * DST_H * sizeof(float);
@@ -64,6 +67,7 @@ static BenchResult bench_separate(const std::string& path) {
     AVPacket* pkt = av_packet_alloc();
     std::vector<cuframe::DecodedFrame> pending;
     int total_frames = 0;
+    int pending_idx = 0;
 
     auto t0 = Clock::now();
 
@@ -71,24 +75,27 @@ static BenchResult bench_separate(const std::string& path) {
         decoder.decode(pkt, pending);
         av_packet_unref(pkt);
 
-        while (static_cast<int>(pending.size()) >= BATCH_SIZE) {
+        while (static_cast<int>(pending.size()) - pending_idx >= BATCH_SIZE) {
             std::vector<const float*> ptrs(BATCH_SIZE);
             for (int i = 0; i < BATCH_SIZE; ++i) {
-                auto& f = pending[i];
+                auto& f = pending[pending_idx + i];
                 auto* nv12 = static_cast<const uint8_t*>(f.buffer->data());
 
                 cuframe::nv12_to_rgb_planar(nv12, rgb_bufs[i],
-                                             f.width, f.height, f.pitch, cuframe::BT601);
-                cuframe::resize_bilinear(rgb_bufs[i], out_bufs[i], resize_params);
-                cuframe::normalize(out_bufs[i], out_bufs[i], DST_W, DST_H, cuframe::IMAGENET_NORM);
+                                             f.width, f.height, f.pitch,
+                                             cuframe::BT601, stream);
+                cuframe::resize_bilinear(rgb_bufs[i], out_bufs[i], resize_params, stream);
+                cuframe::normalize(out_bufs[i], out_bufs[i], DST_W, DST_H,
+                                    cuframe::IMAGENET_NORM, stream);
                 ptrs[i] = out_bufs[i];
             }
-            cuframe::batch_frames(batch, ptrs.data(), BATCH_SIZE);
-            CUFRAME_CUDA_CHECK(cudaDeviceSynchronize());
+            cuframe::batch_frames(batch, ptrs.data(), BATCH_SIZE, stream);
+            CUFRAME_CUDA_CHECK(cudaStreamSynchronize(stream));
+            // release consumed frames to return pool buffers
+            for (int i = 0; i < BATCH_SIZE; ++i)
+                pending[pending_idx + i] = {};
             total_frames += BATCH_SIZE;
-
-            // release processed frames
-            pending.erase(pending.begin(), pending.begin() + BATCH_SIZE);
+            pending_idx += BATCH_SIZE;
         }
     }
 
@@ -96,33 +103,35 @@ static BenchResult bench_separate(const std::string& path) {
     decoder.flush(pending);
 
     // process remaining frames
-    if (!pending.empty()) {
-        int n = static_cast<int>(pending.size());
-        int batch_n = std::min(n, BATCH_SIZE);
+    int remaining = static_cast<int>(pending.size()) - pending_idx;
+    if (remaining > 0) {
+        int batch_n = std::min(remaining, BATCH_SIZE);
         std::vector<const float*> ptrs(batch_n);
         for (int i = 0; i < batch_n; ++i) {
-            auto& f = pending[i];
+            auto& f = pending[pending_idx + i];
             auto* nv12 = static_cast<const uint8_t*>(f.buffer->data());
 
             cuframe::nv12_to_rgb_planar(nv12, rgb_bufs[i],
-                                         f.width, f.height, f.pitch, cuframe::BT601);
-            cuframe::resize_bilinear(rgb_bufs[i], out_bufs[i], resize_params);
-            cuframe::normalize(out_bufs[i], out_bufs[i], DST_W, DST_H, cuframe::IMAGENET_NORM);
+                                         f.width, f.height, f.pitch,
+                                         cuframe::BT601, stream);
+            cuframe::resize_bilinear(rgb_bufs[i], out_bufs[i], resize_params, stream);
+            cuframe::normalize(out_bufs[i], out_bufs[i], DST_W, DST_H,
+                                cuframe::IMAGENET_NORM, stream);
             ptrs[i] = out_bufs[i];
         }
-        cuframe::batch_frames(batch, ptrs.data(), batch_n);
-        CUFRAME_CUDA_CHECK(cudaDeviceSynchronize());
+        cuframe::batch_frames(batch, ptrs.data(), batch_n, stream);
+        CUFRAME_CUDA_CHECK(cudaStreamSynchronize(stream));
         total_frames += batch_n;
     }
 
     auto t1 = Clock::now();
 
-    pending.clear();
     av_packet_free(&pkt);
     for (int i = 0; i < BATCH_SIZE; ++i) {
         cudaFree(rgb_bufs[i]);
         cudaFree(out_bufs[i]);
     }
+    CUFRAME_CUDA_CHECK(cudaStreamDestroy(stream));
 
     double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
     return {total_frames, ms, total_frames / (ms / 1000.0)};
@@ -140,6 +149,9 @@ static BenchResult bench_fused(const std::string& path) {
     cuframe::Decoder decoder(info, 20);
     auto resize_params = cuframe::make_letterbox_params(src_w, src_h, DST_W, DST_H);
 
+    cudaStream_t stream;
+    CUFRAME_CUDA_CHECK(cudaStreamCreate(&stream));
+
     size_t out_bytes = 3 * DST_W * DST_H * sizeof(float);
     std::vector<float*> out_bufs(BATCH_SIZE);
     for (int i = 0; i < BATCH_SIZE; ++i)
@@ -150,6 +162,7 @@ static BenchResult bench_fused(const std::string& path) {
     AVPacket* pkt = av_packet_alloc();
     std::vector<cuframe::DecodedFrame> pending;
     int total_frames = 0;
+    int pending_idx = 0;
 
     auto t0 = Clock::now();
 
@@ -157,43 +170,45 @@ static BenchResult bench_fused(const std::string& path) {
         decoder.decode(pkt, pending);
         av_packet_unref(pkt);
 
-        while (static_cast<int>(pending.size()) >= BATCH_SIZE) {
+        while (static_cast<int>(pending.size()) - pending_idx >= BATCH_SIZE) {
             std::vector<const float*> ptrs(BATCH_SIZE);
             for (int i = 0; i < BATCH_SIZE; ++i) {
-                auto& f = pending[i];
+                auto& f = pending[pending_idx + i];
                 auto* nv12 = static_cast<const uint8_t*>(f.buffer->data());
 
                 cuframe::fused_nv12_to_tensor(nv12, out_bufs[i],
                                                f.width, f.height, f.pitch,
                                                resize_params, cuframe::BT601,
-                                               cuframe::IMAGENET_NORM);
+                                               cuframe::IMAGENET_NORM, stream);
                 ptrs[i] = out_bufs[i];
             }
-            cuframe::batch_frames(batch, ptrs.data(), BATCH_SIZE);
-            CUFRAME_CUDA_CHECK(cudaDeviceSynchronize());
+            cuframe::batch_frames(batch, ptrs.data(), BATCH_SIZE, stream);
+            CUFRAME_CUDA_CHECK(cudaStreamSynchronize(stream));
+            for (int i = 0; i < BATCH_SIZE; ++i)
+                pending[pending_idx + i] = {};
             total_frames += BATCH_SIZE;
-
-            pending.erase(pending.begin(), pending.begin() + BATCH_SIZE);
+            pending_idx += BATCH_SIZE;
         }
     }
 
     decoder.flush(pending);
 
-    if (!pending.empty()) {
-        int n = std::min(static_cast<int>(pending.size()), BATCH_SIZE);
+    int remaining = static_cast<int>(pending.size()) - pending_idx;
+    if (remaining > 0) {
+        int n = std::min(remaining, BATCH_SIZE);
         std::vector<const float*> ptrs(n);
         for (int i = 0; i < n; ++i) {
-            auto& f = pending[i];
+            auto& f = pending[pending_idx + i];
             auto* nv12 = static_cast<const uint8_t*>(f.buffer->data());
 
             cuframe::fused_nv12_to_tensor(nv12, out_bufs[i],
                                            f.width, f.height, f.pitch,
                                            resize_params, cuframe::BT601,
-                                           cuframe::IMAGENET_NORM);
+                                           cuframe::IMAGENET_NORM, stream);
             ptrs[i] = out_bufs[i];
         }
-        cuframe::batch_frames(batch, ptrs.data(), n);
-        CUFRAME_CUDA_CHECK(cudaDeviceSynchronize());
+        cuframe::batch_frames(batch, ptrs.data(), n, stream);
+        CUFRAME_CUDA_CHECK(cudaStreamSynchronize(stream));
         total_frames += n;
     }
 
@@ -203,6 +218,7 @@ static BenchResult bench_fused(const std::string& path) {
     av_packet_free(&pkt);
     for (int i = 0; i < BATCH_SIZE; ++i)
         cudaFree(out_bufs[i]);
+    CUFRAME_CUDA_CHECK(cudaStreamDestroy(stream));
 
     double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
     return {total_frames, ms, total_frames / (ms / 1000.0)};
