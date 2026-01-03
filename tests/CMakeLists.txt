@@ -47,3 +47,7 @@ gtest_discover_tests(test_gpu_frame_batch)
 add_executable(test_fused_preprocess test_fused_preprocess.cpp)
 target_link_libraries(test_fused_preprocess PRIVATE cuframe GTest::gtest_main)
 gtest_discover_tests(test_fused_preprocess WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+
+add_executable(test_preprocess_integration test_preprocess_integration.cpp)
+target_link_libraries(test_preprocess_integration PRIVATE cuframe GTest::gtest_main)
+gtest_discover_tests(test_preprocess_integration WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
