@@ -5,6 +5,7 @@ add_library(cuframe STATIC
     cuframe/decoder.cpp
     cuframe/frame_pool.cpp
     cuframe/gpu_frame_batch.cpp
+    cuframe/batch_pool.cpp
     cuframe/kernels/color_convert.cu
     cuframe/kernels/resize.cu
     cuframe/kernels/normalize.cu

@@ -51,3 +51,7 @@ gtest_discover_tests(test_fused_preprocess WORKING_DIRECTORY ${PROJECT_SOURCE_DI
 add_executable(test_preprocess_integration test_preprocess_integration.cpp)
 target_link_libraries(test_preprocess_integration PRIVATE cuframe GTest::gtest_main)
 gtest_discover_tests(test_preprocess_integration WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+
+add_executable(test_batch_pool test_batch_pool.cpp)
+target_link_libraries(test_batch_pool PRIVATE cuframe GTest::gtest_main)
+gtest_discover_tests(test_batch_pool)

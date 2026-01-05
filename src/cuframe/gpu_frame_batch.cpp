@@ -1,11 +1,12 @@
 #include "cuframe/gpu_frame_batch.h"
 #include "cuframe/cuda_utils.h"
+#include <stdexcept>
 
 namespace cuframe {
 
 GpuFrameBatch::GpuFrameBatch(int n, int c, int h, int w)
     : buffer_(static_cast<size_t>(n) * c * h * w * sizeof(float)),
-      n_(n), c_(c), h_(h), w_(w) {}
+      n_(n), c_(c), h_(h), w_(w), count_(n) {}
 
 float* GpuFrameBatch::data() const {
     return static_cast<float*>(buffer_.data());
@@ -26,6 +27,14 @@ size_t GpuFrameBatch::frame_size_bytes() const {
 
 size_t GpuFrameBatch::total_size_bytes() const {
     return static_cast<size_t>(n_) * frame_size_bytes();
+}
+
+int GpuFrameBatch::count() const { return count_; }
+
+void GpuFrameBatch::set_count(int n) {
+    if (n < 0 || n > n_)
+        throw std::invalid_argument("set_count: n must be in [0, batch_size()]");
+    count_ = n;
 }
 
 void batch_frames(

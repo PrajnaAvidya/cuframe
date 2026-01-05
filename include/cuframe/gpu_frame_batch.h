@@ -27,9 +27,14 @@ public:
     size_t frame_size_bytes() const;  // C * H * W * sizeof(float)
     size_t total_size_bytes() const;  // N * C * H * W * sizeof(float)
 
+    // partial batch support: valid frames may be < batch_size()
+    int count() const;
+    void set_count(int n);
+
 private:
     DeviceBuffer buffer_;
     int n_, c_, h_, w_;
+    int count_;
 };
 
 // copy N float32 planar frames into a pre-allocated batch.
