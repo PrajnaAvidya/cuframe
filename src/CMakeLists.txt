@@ -6,6 +6,7 @@ add_library(cuframe STATIC
     cuframe/frame_pool.cpp
     cuframe/gpu_frame_batch.cpp
     cuframe/batch_pool.cpp
+    cuframe/pipeline.cpp
     cuframe/kernels/color_convert.cu
     cuframe/kernels/resize.cu
     cuframe/kernels/normalize.cu

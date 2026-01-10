@@ -75,7 +75,7 @@ public:
 
 private:
     friend class PipelineBuilder;
-    explicit Pipeline(PipelineConfig config);
+    Pipeline();
 
     struct Impl;
     std::unique_ptr<Impl> impl_;
