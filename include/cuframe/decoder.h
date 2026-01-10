@@ -38,6 +38,7 @@ public:
 
     int width() const;
     int height() const;
+    CUstream stream() const;
 
 private:
     // static callback trampolines — cast user_data back to this

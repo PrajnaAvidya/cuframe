@@ -81,6 +81,25 @@ struct Pipeline::Impl {
         }
     }
 
+    // pre-decode frames for the next batch while preprocess stream is busy on GPU
+    void prefetch() {
+        if (flushed) return;
+
+        int target = config.batch_size;
+        int have = static_cast<int>(pending.size()) - pending_idx;
+
+        while (have < target) {
+            if (!demuxer->read_packet(packet)) {
+                decoder->flush(pending);
+                flushed = true;
+                break;
+            }
+            decoder->decode(packet, pending);
+            av_packet_unref(packet);
+            have = static_cast<int>(pending.size()) - pending_idx;
+        }
+    }
+
     ~Impl() {
         // release PooledBuffers before decoder dies
         pending.clear();
@@ -161,6 +180,10 @@ std::optional<std::shared_ptr<GpuFrameBatch>> Pipeline::next() {
     for (int i = 0; i < collected; ++i)
         ptrs[i] = s.out_bufs[i];
     batch_frames(*batch, ptrs.data(), collected, s.preprocess_stream);
+
+    // pre-decode next batch while preprocess stream finishes on GPU
+    s.prefetch();
+
     CUFRAME_CUDA_CHECK(cudaStreamSynchronize(s.preprocess_stream));
     batch->set_count(collected);
     return batch;
@@ -235,8 +258,8 @@ Pipeline PipelineBuilder::build() {
 
     bool use_fused = config_.has_resize && config_.has_normalize;
 
-    // decoder pool needs headroom for B-frame reordering
-    int pool_count = config_.batch_size + 4;
+    // double-buffer headroom: prefetch decodes batch N+1 while batch N preprocesses
+    int pool_count = 2 * config_.batch_size + 4;
     auto decoder = std::make_unique<Decoder>(info, pool_count);
 
     cudaStream_t preprocess_stream;

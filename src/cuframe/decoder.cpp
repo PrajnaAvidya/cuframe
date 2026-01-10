@@ -76,6 +76,7 @@ void Decoder::flush(std::vector<DecodedFrame>& out) {
 
 int Decoder::width() const { return width_; }
 int Decoder::height() const { return height_; }
+CUstream Decoder::stream() const { return stream_; }
 
 // --- callbacks ---
 
