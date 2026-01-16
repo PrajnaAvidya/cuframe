@@ -11,8 +11,8 @@ the pipeline is the primary interface. it wraps decode, preprocessing, and batch
 
 auto pipeline = cuframe::Pipeline::builder()
     .input("video.mp4")                                              // required
-    .resize(640, 640, cuframe::ResizeMode::LETTERBOX, 114.0f)       // optional
-    .normalize({0.485f, 0.456f, 0.406f}, {0.229f, 0.224f, 0.225f}) // optional
+    .resize(640, 640, cuframe::ResizeMode::LETTERBOX, 114.0f)        // optional
+    .normalize({0.485f, 0.456f, 0.406f}, {0.229f, 0.224f, 0.225f})   // optional
     .batch(8)                                                        // optional (default 1)
     .pool_size(2)                                                    // optional (default 2)
     .color_matrix(cuframe::BT709)                                    // optional (auto-detected)

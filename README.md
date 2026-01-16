@@ -6,7 +6,7 @@ GPU video preprocessing library. Decodes video and produces inference-ready tens
 [Encoded Video]
       │
       ▼
- ┌─────────┐
+ ┌──────────┐
  │  NVDEC   │  hardware decode → GPU memory
  └────┬─────┘
       │  NV12 surfaces

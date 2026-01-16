@@ -296,6 +296,7 @@ Pipeline PipelineBuilder::build() {
     impl->rgb_bufs = std::move(rgb_bufs);
     impl->out_bufs = std::move(out_bufs);
     impl->batch_pool = std::move(batch_pool);
+    impl->pending.reserve(config_.batch_size);
     impl->packet = av_packet_alloc();
 
     Pipeline p;
