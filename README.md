@@ -69,6 +69,22 @@ while (auto batch = pipeline.next()) {
 
 debug build, 300 frames synthetic content, RTX 3080. fused kernel eliminates 2 intermediate buffers and ~2.5x memory traffic vs separate kernels. pipeline overhead vs raw: ~7% (BatchPool + shared_ptr + state machine).
 
+### end-to-end inference
+
+full decode → preprocess → YOLO inference pipeline on real video content. cuframe (NVDEC + fused GPU preprocess, zero-copy to ORT) vs CPU baseline (OpenCV decode + resize/normalize + cudaMemcpy H2D to ORT). both paths run inference on GPU via ONNX Runtime CUDA EP.
+
+test conditions: 1280x696 H.264 live action clip, 24fps, ~1460 frames, RTX 3080. YOLO26n / YOLO11n nano models, batch size 1.
+
+| task | model input | cuframe preprocess | CPU preprocess | preprocess speedup | cuframe e2e fps | CPU e2e fps | e2e speedup |
+|------|-------------|-------------------|----------------|-------------------|-----------------|-------------|-------------|
+| detect | 640x640 | 0.12ms | 2.75ms | 23x | 227 | 132 | 1.7x |
+| pose | 640x640 | 0.12ms | 2.70ms | 23x | 218 | 131 | 1.7x |
+| segment | 640x640 | 0.13ms | 3.67ms | 28x | 109 | 75 | 1.5x |
+| obb | 640x640 | 0.09ms | 2.68ms | 30x | 265 | 142 | 1.9x |
+| classify | 224x224 | 0.12ms | 0.91ms | 8x | 846 | 457 | 1.9x |
+
+preprocessing is 20-30x faster with cuframe. end-to-end speedup is 1.5-1.9x because inference time dominates — but preprocessing drops from ~35% of frame time to <3%, eliminating it as a bottleneck. the CPU path also pays a ~0.4ms cudaMemcpy penalty per frame that cuframe avoids entirely via zero-copy.
+
 ## build
 
 ### requirements
