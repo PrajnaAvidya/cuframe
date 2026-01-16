@@ -1,0 +1,9 @@
+add_executable(basic_pipeline basic_pipeline.cpp)
+target_link_libraries(basic_pipeline PRIVATE cuframe)
+
+# inference examples are illustrative — compile but framework calls are pseudocode
+add_executable(tensorrt_inference tensorrt_inference.cpp)
+target_link_libraries(tensorrt_inference PRIVATE cuframe)
+
+add_executable(onnxruntime_inference onnxruntime_inference.cpp)
+target_link_libraries(onnxruntime_inference PRIVATE cuframe)
