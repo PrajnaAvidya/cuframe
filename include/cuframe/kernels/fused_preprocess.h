@@ -17,6 +17,7 @@ void fused_nv12_to_tensor(
     const ResizeParams& resize,
     const ColorMatrix& color,
     const NormParams& norm,
+    bool bgr = false,
     cudaStream_t stream = nullptr
 );
 

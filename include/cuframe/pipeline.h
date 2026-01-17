@@ -30,6 +30,9 @@ struct PipelineConfig {
     bool auto_color_matrix = true;
     ColorMatrix color_matrix{};
 
+    // channel order
+    bool bgr = false;
+
     // batching
     int batch_size = 1;
 
@@ -49,6 +52,7 @@ public:
     PipelineBuilder& batch(int size);
     PipelineBuilder& pool_size(int n);
     PipelineBuilder& color_matrix(const ColorMatrix& matrix);
+    PipelineBuilder& channel_order_bgr(bool bgr = true);
 
     Pipeline build();
 

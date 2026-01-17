@@ -30,7 +30,8 @@ __global__ void fused_nv12_to_tensor_kernel(
     float3 coeff_r, float3 coeff_g, float3 coeff_b,
     float norm_scale_r, float norm_bias_r,
     float norm_scale_g, float norm_bias_g,
-    float norm_scale_b, float norm_bias_b
+    float norm_scale_b, float norm_bias_b,
+    bool bgr
 ) {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
@@ -38,14 +39,16 @@ __global__ void fused_nv12_to_tensor_kernel(
 
     int plane = dst_w * dst_h;
     int pixel = y * dst_w + x;
+    int r_plane = bgr ? 2 : 0;
+    int b_plane = bgr ? 0 : 2;
 
     // padding region — write normalized pad value per channel
     int ix = x - pad_left;
     int iy = y - pad_top;
     if (ix < 0 || ix >= inner_w || iy < 0 || iy >= inner_h) {
-        rgb[0 * plane + pixel] = pad_value * norm_scale_r + norm_bias_r;
-        rgb[1 * plane + pixel] = pad_value * norm_scale_g + norm_bias_g;
-        rgb[2 * plane + pixel] = pad_value * norm_scale_b + norm_bias_b;
+        rgb[r_plane * plane + pixel] = pad_value * norm_scale_r + norm_bias_r;
+        rgb[1       * plane + pixel] = pad_value * norm_scale_g + norm_bias_g;
+        rgb[b_plane * plane + pixel] = pad_value * norm_scale_b + norm_bias_b;
         return;
     }
 
@@ -80,16 +83,16 @@ __global__ void fused_nv12_to_tensor_kernel(
     float B = w00 * c00.z + w01 * c01.z + w10 * c10.z + w11 * c11.z;
 
     // normalize and write planar
-    rgb[0 * plane + pixel] = R * norm_scale_r + norm_bias_r;
-    rgb[1 * plane + pixel] = G * norm_scale_g + norm_bias_g;
-    rgb[2 * plane + pixel] = B * norm_scale_b + norm_bias_b;
+    rgb[r_plane * plane + pixel] = R * norm_scale_r + norm_bias_r;
+    rgb[1       * plane + pixel] = G * norm_scale_g + norm_bias_g;
+    rgb[b_plane * plane + pixel] = B * norm_scale_b + norm_bias_b;
 }
 
 void fused_nv12_to_tensor(
     const uint8_t* nv12_ptr, float* rgb_ptr,
     int src_w, int src_h, unsigned int src_pitch,
     const ResizeParams& r, const ColorMatrix& c, const NormParams& n,
-    cudaStream_t stream
+    bool bgr, cudaStream_t stream
 ) {
     dim3 block(32, 8);
     dim3 grid(
@@ -105,7 +108,8 @@ void fused_nv12_to_tensor(
         c.r, c.g, c.b,
         n.scale[0], n.bias[0],
         n.scale[1], n.bias[1],
-        n.scale[2], n.bias[2]
+        n.scale[2], n.bias[2],
+        bgr
     );
     CUFRAME_CUDA_CHECK(cudaGetLastError());
 }

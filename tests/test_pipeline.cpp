@@ -283,6 +283,54 @@ TEST(PipelineTest, AutoColorMatrix) {
 }
 
 // ============================================================================
+// BGR flag — planes swap correctly
+// ============================================================================
+
+TEST(PipelineTest, BGRFlag) {
+    if (!test_video_exists()) GTEST_SKIP() << "test video not found";
+
+    auto rgb_pipeline = cuframe::Pipeline::builder()
+        .input(TEST_VIDEO)
+        .resize(DST_W, DST_H)
+        .normalize({0.485f, 0.456f, 0.406f}, {0.229f, 0.224f, 0.225f})
+        .batch(1)
+        .build();
+
+    auto bgr_pipeline = cuframe::Pipeline::builder()
+        .input(TEST_VIDEO)
+        .resize(DST_W, DST_H)
+        .normalize({0.485f, 0.456f, 0.406f}, {0.229f, 0.224f, 0.225f})
+        .channel_order_bgr()
+        .batch(1)
+        .build();
+
+    EXPECT_FALSE(rgb_pipeline.config().bgr);
+    EXPECT_TRUE(bgr_pipeline.config().bgr);
+
+    auto rgb_batch = rgb_pipeline.next();
+    auto bgr_batch = bgr_pipeline.next();
+    ASSERT_TRUE(rgb_batch.has_value());
+    ASSERT_TRUE(bgr_batch.has_value());
+
+    int plane = DST_W * DST_H;
+    size_t total = 3ULL * plane;
+    std::vector<float> rgb(total), bgr(total);
+    CUFRAME_CUDA_CHECK(cudaMemcpy(rgb.data(), (*rgb_batch)->data(),
+                                   total * sizeof(float), cudaMemcpyDeviceToHost));
+    CUFRAME_CUDA_CHECK(cudaMemcpy(bgr.data(), (*bgr_batch)->data(),
+                                   total * sizeof(float), cudaMemcpyDeviceToHost));
+
+    for (int i = 0; i < plane; i += 37) {
+        EXPECT_FLOAT_EQ(bgr[0 * plane + i], rgb[2 * plane + i])
+            << "BGR plane 0 != RGB plane 2 at pixel " << i;
+        EXPECT_FLOAT_EQ(bgr[1 * plane + i], rgb[1 * plane + i])
+            << "G plane differs at pixel " << i;
+        EXPECT_FLOAT_EQ(bgr[2 * plane + i], rgb[0 * plane + i])
+            << "BGR plane 2 != RGB plane 0 at pixel " << i;
+    }
+}
+
+// ============================================================================
 // error: no input
 // ============================================================================
 

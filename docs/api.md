@@ -37,6 +37,8 @@ auto pipeline = cuframe::Pipeline::builder()
 
 **`color_matrix(const ColorMatrix& matrix)`** — optional. override the NV12 → RGB color matrix. if not set, auto-selects BT.601 for source ≤720p and BT.709 for >720p. use `cuframe::BT601` or `cuframe::BT709`.
 
+**`channel_order_bgr(bool bgr = true)`** — optional. output BGR channel order instead of RGB. use for models trained with OpenCV defaults (Caffe, PaddlePaddle, some YOLO variants). default is RGB.
+
 **`build()`** — creates the pipeline. opens the video file, initializes the decoder, allocates all GPU buffers. throws `std::invalid_argument` if no input path is set, `std::runtime_error` if the file can't be opened or decoded.
 
 ### Pipeline

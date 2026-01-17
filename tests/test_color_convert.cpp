@@ -193,6 +193,31 @@ TEST_F(ColorConvertTest, BT709DifferentFromBT601) {
     EXPECT_GT(diff_count, 0) << "BT601 and BT709 produced identical output";
 }
 
+TEST_F(ColorConvertTest, BGRSwapsChannels) {
+    auto& f = frame();
+    auto* nv12 = static_cast<const uint8_t*>(f.buffer->data());
+
+    // rgb path
+    cuframe::nv12_to_rgb_planar(nv12, rgb_ptr_, w_, h_, pitch_, cuframe::BT601, false);
+    CUFRAME_CUDA_CHECK(cudaDeviceSynchronize());
+    auto rgb = rgb_to_host();
+
+    // bgr path
+    cuframe::nv12_to_rgb_planar(nv12, rgb_ptr_, w_, h_, pitch_, cuframe::BT601, true);
+    CUFRAME_CUDA_CHECK(cudaDeviceSynchronize());
+    auto bgr = rgb_to_host();
+
+    // plane 0 of BGR == plane 2 of RGB (B), plane 2 of BGR == plane 0 of RGB (R)
+    for (int i = 0; i < pixels_; i += 37) {
+        EXPECT_FLOAT_EQ(bgr[0 * pixels_ + i], rgb[2 * pixels_ + i])
+            << "BGR plane 0 != RGB plane 2 at pixel " << i;
+        EXPECT_FLOAT_EQ(bgr[1 * pixels_ + i], rgb[1 * pixels_ + i])
+            << "G plane differs at pixel " << i;
+        EXPECT_FLOAT_EQ(bgr[2 * pixels_ + i], rgb[0 * pixels_ + i])
+            << "BGR plane 2 != RGB plane 0 at pixel " << i;
+    }
+}
+
 TEST_F(ColorConvertTest, StreamExecution) {
     cudaStream_t stream;
     CUFRAME_CUDA_CHECK(cudaStreamCreate(&stream));

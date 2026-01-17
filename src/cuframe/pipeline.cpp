@@ -63,21 +63,22 @@ struct Pipeline::Impl {
 
         if (use_fused) {
             fused_nv12_to_tensor(nv12, out_buf, w, h, pitch,
-                resize_params, config.color_matrix, config.norm, stream);
+                resize_params, config.color_matrix, config.norm,
+                config.bgr, stream);
         } else if (config.has_resize) {
             // color convert → resize
             nv12_to_rgb_planar(nv12, rgb_buf, w, h, pitch,
-                               config.color_matrix, stream);
+                               config.color_matrix, config.bgr, stream);
             resize_bilinear(rgb_buf, out_buf, resize_params, stream);
         } else if (config.has_normalize) {
             // color convert → normalize in-place
             nv12_to_rgb_planar(nv12, out_buf, w, h, pitch,
-                               config.color_matrix, stream);
+                               config.color_matrix, config.bgr, stream);
             cuframe::normalize(out_buf, out_buf, w, h, config.norm, stream);
         } else {
             // color convert only
             nv12_to_rgb_planar(nv12, out_buf, w, h, pitch,
-                               config.color_matrix, stream);
+                               config.color_matrix, config.bgr, stream);
         }
     }
 
@@ -228,6 +229,11 @@ PipelineBuilder& PipelineBuilder::pool_size(int n) {
 PipelineBuilder& PipelineBuilder::color_matrix(const ColorMatrix& matrix) {
     config_.auto_color_matrix = false;
     config_.color_matrix = matrix;
+    return *this;
+}
+
+PipelineBuilder& PipelineBuilder::channel_order_bgr(bool bgr) {
+    config_.bgr = bgr;
     return *this;
 }
 

@@ -199,6 +199,42 @@ TEST_F(FusedPreprocessTest, IdentitySizeNoLetterbox) {
         << mismatch_count << " mismatches, max diff = " << max_diff;
 }
 
+TEST_F(FusedPreprocessTest, BGRSwapsChannels) {
+    const int dst_w = 640, dst_h = 640;
+    auto params = cuframe::make_letterbox_params(w_, h_, dst_w, dst_h);
+    size_t out_size = 3 * dst_w * dst_h * sizeof(float);
+    int plane = dst_w * dst_h;
+
+    float* d_buf = nullptr;
+    CUFRAME_CUDA_CHECK(cudaMalloc(&d_buf, out_size));
+
+    // rgb path
+    cuframe::fused_nv12_to_tensor(nv12_ptr_, d_buf, w_, h_, pitch_,
+                                   params, cuframe::BT601, cuframe::IMAGENET_NORM, false);
+    CUFRAME_CUDA_CHECK(cudaDeviceSynchronize());
+    std::vector<float> rgb(3 * plane);
+    CUFRAME_CUDA_CHECK(cudaMemcpy(rgb.data(), d_buf, out_size, cudaMemcpyDeviceToHost));
+
+    // bgr path
+    cuframe::fused_nv12_to_tensor(nv12_ptr_, d_buf, w_, h_, pitch_,
+                                   params, cuframe::BT601, cuframe::IMAGENET_NORM, true);
+    CUFRAME_CUDA_CHECK(cudaDeviceSynchronize());
+    std::vector<float> bgr(3 * plane);
+    CUFRAME_CUDA_CHECK(cudaMemcpy(bgr.data(), d_buf, out_size, cudaMemcpyDeviceToHost));
+
+    // plane 0 of BGR == plane 2 of RGB, plane 2 of BGR == plane 0 of RGB
+    for (int i = 0; i < plane; i += 37) {
+        EXPECT_FLOAT_EQ(bgr[0 * plane + i], rgb[2 * plane + i])
+            << "BGR plane 0 != RGB plane 2 at pixel " << i;
+        EXPECT_FLOAT_EQ(bgr[1 * plane + i], rgb[1 * plane + i])
+            << "G plane differs at pixel " << i;
+        EXPECT_FLOAT_EQ(bgr[2 * plane + i], rgb[0 * plane + i])
+            << "BGR plane 2 != RGB plane 0 at pixel " << i;
+    }
+
+    cudaFree(d_buf);
+}
+
 TEST_F(FusedPreprocessTest, StreamExecution) {
     cudaStream_t stream;
     CUFRAME_CUDA_CHECK(cudaStreamCreate(&stream));

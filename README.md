@@ -56,6 +56,7 @@ while (auto batch = pipeline.next()) {
 - **NVDEC hardware decode** — H.264/HEVC decoded by dedicated GPU hardware, frames land directly in GPU memory
 - **fused preprocessing kernel** — NV12 color conversion + bilinear resize + normalize in a single kernel pass. no intermediate buffers, no extra kernel launches.
 - **auto color matrix** — BT.601 for SD (≤720p), BT.709 for HD (>720p), overridable
+- **RGB/BGR channel order** — default RGB, switchable to BGR for OpenCV-convention models
 - **letterbox resize** — aspect-ratio-preserving resize with configurable pad value (default 114.0 for YOLO convention)
 - **refcounted batch pool** — pre-allocated GPU batch buffers returned via `shared_ptr` with custom deleter, supports multiple consumers and backpressure
 - **multi-stream prefetch** — overlaps decode of batch N+1 with preprocessing of batch N using separate CUDA streams
