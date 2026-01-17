@@ -1,0 +1,63 @@
+name: build
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: nvidia/cuda:12.6.3-devel-ubuntu24.04
+
+    steps:
+      - name: install deps
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            cmake git pkg-config \
+            libavformat-dev libavcodec-dev libavutil-dev libswscale-dev
+
+      - name: create driver stubs
+        run: |
+          cat > /tmp/nvcuvid_stub.c << 'EOF'
+          // stub implementations — symbols only, never called
+          int cuvidGetDecoderCaps() { return 0; }
+          int cuvidCreateDecoder() { return 0; }
+          int cuvidDestroyDecoder() { return 0; }
+          int cuvidDecodePicture() { return 0; }
+          int cuvidGetDecodeStatus() { return 0; }
+          int cuvidReconfigureDecoder() { return 0; }
+          int cuvidMapVideoFrame() { return 0; }
+          int cuvidUnmapVideoFrame() { return 0; }
+          int cuvidMapVideoFrame64() { return 0; }
+          int cuvidUnmapVideoFrame64() { return 0; }
+          int cuvidCtxLockCreate() { return 0; }
+          int cuvidCtxLockDestroy() { return 0; }
+          int cuvidCtxLock() { return 0; }
+          int cuvidCtxUnlock() { return 0; }
+          int cuvidCreateVideoSource() { return 0; }
+          int cuvidDestroyVideoSource() { return 0; }
+          int cuvidSetVideoSourceState() { return 0; }
+          int cuvidGetVideoSourceState() { return 0; }
+          int cuvidGetSourceVideoFormat() { return 0; }
+          int cuvidGetSourceAudioFormat() { return 0; }
+          int cuvidCreateVideoParser() { return 0; }
+          int cuvidParseVideoData() { return 0; }
+          int cuvidDestroyVideoParser() { return 0; }
+          EOF
+          gcc -shared -o /usr/local/cuda/lib64/stubs/libnvcuvid.so /tmp/nvcuvid_stub.c
+          ln -s libcuda.so /usr/local/cuda/lib64/stubs/libcuda.so.1
+
+      - uses: actions/checkout@v4
+
+      - name: configure
+        run: >
+          cmake -B build
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_LIBRARY_PATH=/usr/local/cuda/lib64/stubs
+
+      - name: build
+        run: cmake --build build -j$(nproc)
+        env:
+          LD_LIBRARY_PATH: /usr/local/cuda/lib64/stubs
