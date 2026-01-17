@@ -116,7 +116,7 @@ public:
 };
 ```
 
-**`data()`** — device pointer to the beginning of the NCHW tensor. pass this to inference frameworks. layout: `batch_size × channels × height × width` contiguous float32.
+**`data()`** — device pointer to the NCHW tensor. pass this to inference frameworks. layout: `batch_size × channels × height × width` contiguous float32.
 
 **`frame(i)`** — device pointer to frame `i` within the batch. equivalent to `data() + i * channels() * height() * width()`.
 
@@ -229,7 +229,7 @@ cuframe::fused_nv12_to_tensor(nv12_ptr, rgb_ptr,
     resize_params, color_matrix, norm_params, stream);
 ```
 
-single-pass NV12 → normalized float32 RGB planar. combines color conversion, bilinear resize, and normalization in one kernel launch. eliminates 2 intermediate buffers and ~2.5x memory traffic vs separate kernels.
+NV12 → normalized float32 RGB planar in one kernel launch. color conversion, bilinear resize, and normalization combined. eliminates 2 intermediate buffers and ~2.5x memory traffic vs separate kernels.
 
 the pipeline uses this automatically when both resize and normalize are configured.
 

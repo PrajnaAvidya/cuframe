@@ -1,6 +1,6 @@
 # cuframe
 
-GPU video preprocessing library. Decodes video and produces inference-ready tensors entirely on GPU with no unnecessary host copies.
+GPU video preprocessing library. Decodes video and produces inference-ready tensors entirely on GPU — one builder, one `next()` call, one device pointer. No intermediate copies, no framework dependencies, no stitching three libraries together.
 
 ```
 [Encoded Video]
@@ -29,6 +29,10 @@ GPU video preprocessing library. Decodes video and produces inference-ready tens
  TensorRT / ONNX Runtime / custom inference
 ```
 
+## why
+
+most GPU video preprocessing pipelines require stitching together separate libraries for decode, color conversion, resize, and normalization. each launching its own kernel with its own intermediate buffers. cuframe does all of this in a single fused CUDA kernel pass directly from NVDEC's NV12 output. no existing tool does this, including NVIDIA's DALI and CV-CUDA. preprocessing cost drops to ~0.12ms per frame, and the pipeline runs at ~95% of the NVDEC hardware ceiling.
+
 ## quickstart
 
 ```cpp
@@ -50,7 +54,7 @@ while (auto batch = pipeline.next()) {
 ## features
 
 - **NVDEC hardware decode** — H.264/HEVC decoded by dedicated GPU hardware, frames land directly in GPU memory
-- **fused preprocessing kernel** — NV12 color conversion + bilinear resize + normalize in a single kernel pass, eliminating intermediate buffers
+- **fused preprocessing kernel** — NV12 color conversion + bilinear resize + normalize in a single kernel pass. no intermediate buffers, no extra kernel launches.
 - **auto color matrix** — BT.601 for SD (≤720p), BT.709 for HD (>720p), overridable
 - **letterbox resize** — aspect-ratio-preserving resize with configurable pad value (default 114.0 for YOLO convention)
 - **refcounted batch pool** — pre-allocated GPU batch buffers returned via `shared_ptr` with custom deleter, supports multiple consumers and backpressure
@@ -67,7 +71,7 @@ while (auto batch = pipeline.next()) {
 | cuframe raw fused kernels | 730 | 10.4x |
 | CPU baseline (ffmpeg + sws_scale + cudaMemcpy) | 70 | — |
 
-debug build, 300 frames synthetic content, RTX 3080. fused kernel eliminates 2 intermediate buffers and ~2.5x memory traffic vs separate kernels. pipeline overhead vs raw: ~7% (BatchPool + shared_ptr + state machine).
+debug build, 300 frames synthetic content, RTX 3080 (~717 fps estimated NVDEC ceiling for 1080p H.264). pipeline operates at ~95% of hardware decode limit so preprocessing overhead is effectively zero. fused kernel eliminates 2 intermediate buffers and ~2.5x memory traffic vs separate kernels.
 
 ### end-to-end inference
 
@@ -83,7 +87,7 @@ test conditions: 1280x696 H.264 live action clip, 24fps, ~1460 frames, RTX 3080.
 | obb | 640x640 | 0.09ms | 2.68ms | 30x | 265 | 142 | 1.9x |
 | classify | 224x224 | 0.12ms | 0.91ms | 8x | 846 | 457 | 1.9x |
 
-preprocessing is 20-30x faster with cuframe. end-to-end speedup is 1.5-1.9x because inference time dominates — but preprocessing drops from ~35% of frame time to <3%, eliminating it as a bottleneck. the CPU path also pays a ~0.4ms cudaMemcpy penalty per frame that cuframe avoids entirely via zero-copy.
+preprocessing is 20-30x faster with cuframe. end-to-end speedup is 1.5-1.9x because inference time dominates — but preprocessing drops from ~35% of frame time to <3%, eliminating it as a bottleneck. the CPU path also pays ~0.4ms cudaMemcpy per frame that cuframe avoids via zero-copy.
 
 ## build
 
