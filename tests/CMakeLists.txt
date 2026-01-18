@@ -63,3 +63,7 @@ gtest_discover_tests(test_pipeline WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
 add_executable(test_pipeline_multistream test_pipeline_multistream.cpp)
 target_link_libraries(test_pipeline_multistream PRIVATE cuframe GTest::gtest_main)
 gtest_discover_tests(test_pipeline_multistream WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+
+add_executable(test_center_crop test_center_crop.cpp)
+target_link_libraries(test_center_crop PRIVATE cuframe GTest::gtest_main)
+gtest_discover_tests(test_center_crop WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})

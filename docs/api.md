@@ -27,6 +27,12 @@ auto pipeline = cuframe::Pipeline::builder()
 - `pad_value` defaults to 114.0f (YOLO convention, in [0, 255] range)
 - if omitted, output is at source resolution
 
+**`center_crop(int width, int height)`** — optional. center crop the (conceptually) resized image to width × height.
+- if resize is also set: resize first, then crop the center region. the two operations are fused into a single kernel pass — no intermediate buffer.
+- if resize is not set: crop from the center of the source frame at source resolution.
+- crop dimensions must not exceed the resized (or source) dimensions.
+- typical classification pipeline: `.resize(256, 256, ResizeMode::STRETCH).center_crop(224, 224).normalize(...)`
+
 **`normalize(std::array<float, 3> mean, std::array<float, 3> std)`** — optional. per-channel normalization. transforms pixel values from [0, 255] to `(pixel/255 - mean) / std`. typical values:
 - ImageNet: mean={0.485, 0.456, 0.406}, std={0.229, 0.224, 0.225}
 - if omitted, output is in [0, 255] float32 range
@@ -73,6 +79,9 @@ struct PipelineConfig {
     int resize_height = 0;
     ResizeMode resize_mode = ResizeMode::LETTERBOX;
     float pad_value = 114.0f;
+    bool has_center_crop = false;
+    int crop_width = 0;
+    int crop_height = 0;
     bool has_normalize = false;
     NormParams norm{};
     bool auto_color_matrix = true;
@@ -193,8 +202,12 @@ struct ResizeParams {
     int inner_w, inner_h;    // scaled image dimensions
     float scale_x, scale_y;  // source pixels per output pixel
     float pad_value;
+    float src_offset_x = 0.0f;  // crop offset in source pixels
+    float src_offset_y = 0.0f;
 };
 ```
+
+- `make_center_crop_params(src_w, src_h, resize_w, resize_h, crop_w, crop_h)` — compute resize params for center crop. if `resize_w/resize_h` are 0, crop directly from source. otherwise, maps the center crop region of the (conceptually) resized image back to source coordinates.
 
 ### normalize
 

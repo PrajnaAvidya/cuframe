@@ -27,6 +27,7 @@ __global__ void fused_nv12_to_tensor_kernel(
     int dst_w, int dst_h,
     int pad_left, int pad_top, int inner_w, int inner_h,
     float scale_x, float scale_y, float pad_value,
+    float src_offset_x, float src_offset_y,
     float3 coeff_r, float3 coeff_g, float3 coeff_b,
     float norm_scale_r, float norm_bias_r,
     float norm_scale_g, float norm_bias_g,
@@ -52,9 +53,9 @@ __global__ void fused_nv12_to_tensor_kernel(
         return;
     }
 
-    // map to source coordinates (pixel center alignment)
-    float src_xf = (ix + 0.5f) * scale_x - 0.5f;
-    float src_yf = (iy + 0.5f) * scale_y - 0.5f;
+    // map to source coordinates (pixel center alignment + crop offset)
+    float src_xf = (ix + 0.5f) * scale_x - 0.5f + src_offset_x;
+    float src_yf = (iy + 0.5f) * scale_y - 0.5f + src_offset_y;
 
     int x0 = (int)floorf(src_xf);
     int y0 = (int)floorf(src_yf);
@@ -105,6 +106,7 @@ void fused_nv12_to_tensor(
         r.dst_w, r.dst_h,
         r.pad_left, r.pad_top, r.inner_w, r.inner_h,
         r.scale_x, r.scale_y, r.pad_value,
+        r.src_offset_x, r.src_offset_y,
         c.r, c.g, c.b,
         n.scale[0], n.bias[0],
         n.scale[1], n.bias[1],

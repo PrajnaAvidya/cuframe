@@ -22,6 +22,11 @@ struct PipelineConfig {
     ResizeMode resize_mode = ResizeMode::LETTERBOX;
     float pad_value = 114.0f;
 
+    // center crop (applied after resize conceptually, fused in practice)
+    bool has_center_crop = false;
+    int crop_width = 0;
+    int crop_height = 0;
+
     // normalize (optional — if not set, output in [0,255])
     bool has_normalize = false;
     NormParams norm{};
@@ -52,6 +57,7 @@ public:
     PipelineBuilder& batch(int size);
     PipelineBuilder& pool_size(int n);
     PipelineBuilder& color_matrix(const ColorMatrix& matrix);
+    PipelineBuilder& center_crop(int width, int height);
     PipelineBuilder& channel_order_bgr(bool bgr = true);
 
     Pipeline build();

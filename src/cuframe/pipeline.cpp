@@ -65,8 +65,8 @@ struct Pipeline::Impl {
             fused_nv12_to_tensor(nv12, out_buf, w, h, pitch,
                 resize_params, config.color_matrix, config.norm,
                 config.bgr, stream);
-        } else if (config.has_resize) {
-            // color convert → resize
+        } else if (config.has_resize || config.has_center_crop) {
+            // color convert → resize (or crop)
             nv12_to_rgb_planar(nv12, rgb_buf, w, h, pitch,
                                config.color_matrix, config.bgr, stream);
             resize_bilinear(rgb_buf, out_buf, resize_params, stream);
@@ -232,6 +232,13 @@ PipelineBuilder& PipelineBuilder::color_matrix(const ColorMatrix& matrix) {
     return *this;
 }
 
+PipelineBuilder& PipelineBuilder::center_crop(int width, int height) {
+    config_.has_center_crop = true;
+    config_.crop_width = width;
+    config_.crop_height = height;
+    return *this;
+}
+
 PipelineBuilder& PipelineBuilder::channel_order_bgr(bool bgr) {
     config_.bgr = bgr;
     return *this;
@@ -250,19 +257,41 @@ Pipeline PipelineBuilder::build() {
     if (config_.auto_color_matrix)
         config_.color_matrix = (info.height > 720) ? BT709 : BT601;
 
-    int out_w = config_.has_resize ? config_.resize_width : info.width;
-    int out_h = config_.has_resize ? config_.resize_height : info.height;
+    // validate center crop
+    if (config_.has_center_crop) {
+        int eff_w = config_.has_resize ? config_.resize_width : info.width;
+        int eff_h = config_.has_resize ? config_.resize_height : info.height;
+        if (config_.crop_width > eff_w || config_.crop_height > eff_h)
+            throw std::invalid_argument(
+                "pipeline: crop dimensions exceed resized dimensions");
+    }
 
+    int out_w, out_h;
     ResizeParams resize_params{};
-    if (config_.has_resize) {
+
+    if (config_.has_center_crop) {
+        out_w = config_.crop_width;
+        out_h = config_.crop_height;
+        resize_params = make_center_crop_params(
+            info.width, info.height,
+            config_.has_resize ? config_.resize_width : 0,
+            config_.has_resize ? config_.resize_height : 0,
+            config_.crop_width, config_.crop_height);
+    } else if (config_.has_resize) {
+        out_w = config_.resize_width;
+        out_h = config_.resize_height;
         resize_params = (config_.resize_mode == ResizeMode::LETTERBOX)
             ? make_letterbox_params(info.width, info.height,
                   config_.resize_width, config_.resize_height, config_.pad_value)
             : make_resize_params(info.width, info.height,
                   config_.resize_width, config_.resize_height);
+    } else {
+        out_w = info.width;
+        out_h = info.height;
     }
 
-    bool use_fused = config_.has_resize && config_.has_normalize;
+    bool use_fused = (config_.has_resize || config_.has_center_crop)
+                     && config_.has_normalize;
 
     // double-buffer headroom: prefetch decodes batch N+1 while batch N preprocesses
     int pool_count = 2 * config_.batch_size + 4;
@@ -277,9 +306,9 @@ Pipeline PipelineBuilder::build() {
     for (int i = 0; i < config_.batch_size; ++i)
         CUFRAME_CUDA_CHECK(cudaMalloc(&out_bufs[i], out_bytes));
 
-    // intermediate RGB buffers only for separate path with resize
+    // intermediate RGB buffers only for separate path with resize/crop
     std::vector<float*> rgb_bufs;
-    if (config_.has_resize && !use_fused) {
+    if ((config_.has_resize || config_.has_center_crop) && !use_fused) {
         size_t rgb_bytes = 3ULL * info.width * info.height * sizeof(float);
         rgb_bufs.resize(config_.batch_size, nullptr);
         for (int i = 0; i < config_.batch_size; ++i)

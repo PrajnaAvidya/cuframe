@@ -43,11 +43,47 @@ ResizeParams make_letterbox_params(int src_w, int src_h, int dst_w, int dst_h,
     return p;
 }
 
+ResizeParams make_center_crop_params(int src_w, int src_h,
+                                      int resize_w, int resize_h,
+                                      int crop_w, int crop_h) {
+    ResizeParams p{};
+    p.src_w = src_w;
+    p.src_h = src_h;
+    p.dst_w = crop_w;
+    p.dst_h = crop_h;
+    p.pad_left = 0;
+    p.pad_top = 0;
+    p.inner_w = crop_w;
+    p.inner_h = crop_h;
+    p.pad_value = 0.0f;
+
+    if (resize_w == 0 || resize_h == 0) {
+        // crop only — no resize
+        p.scale_x = 1.0f;
+        p.scale_y = 1.0f;
+        p.src_offset_x = (src_w - crop_w) / 2.0f;
+        p.src_offset_y = (src_h - crop_h) / 2.0f;
+    } else {
+        // resize + crop: map crop region in resized space back to source
+        float rx = (float)src_w / (float)resize_w;
+        float ry = (float)src_h / (float)resize_h;
+        float crop_origin_x = (resize_w - crop_w) / 2.0f;
+        float crop_origin_y = (resize_h - crop_h) / 2.0f;
+        p.src_offset_x = crop_origin_x * rx;
+        p.src_offset_y = crop_origin_y * ry;
+        p.scale_x = rx;
+        p.scale_y = ry;
+    }
+
+    return p;
+}
+
 __global__ void resize_bilinear_kernel(
     const float* src, float* dst,
     int src_w, int src_h, int dst_w, int dst_h,
     int pad_left, int pad_top, int inner_w, int inner_h,
-    float scale_x, float scale_y, float pad_value
+    float scale_x, float scale_y, float pad_value,
+    float src_offset_x, float src_offset_y
 ) {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
@@ -64,9 +100,9 @@ __global__ void resize_bilinear_kernel(
         return;
     }
 
-    // map to source coordinates (pixel center alignment)
-    float src_x = (ix + 0.5f) * scale_x - 0.5f;
-    float src_y = (iy + 0.5f) * scale_y - 0.5f;
+    // map to source coordinates (pixel center alignment + crop offset)
+    float src_x = (ix + 0.5f) * scale_x - 0.5f + src_offset_x;
+    float src_y = (iy + 0.5f) * scale_y - 0.5f + src_offset_y;
 
     // bilinear sample
     int x0 = (int)floorf(src_x);
@@ -104,7 +140,8 @@ void resize_bilinear(
         src_ptr, dst_ptr,
         p.src_w, p.src_h, p.dst_w, p.dst_h,
         p.pad_left, p.pad_top, p.inner_w, p.inner_h,
-        p.scale_x, p.scale_y, p.pad_value
+        p.scale_x, p.scale_y, p.pad_value,
+        p.src_offset_x, p.src_offset_y
     );
     CUFRAME_CUDA_CHECK(cudaGetLastError());
 }

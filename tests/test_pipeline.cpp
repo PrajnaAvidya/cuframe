@@ -394,3 +394,107 @@ TEST(PipelineTest, PoolBackpressure) {
     EXPECT_TRUE(completed.load());
     EXPECT_NE(second_result, nullptr);
 }
+
+// ============================================================================
+// center crop + resize — fused path, full iteration
+// ============================================================================
+
+TEST(PipelineTest, CenterCropWithResize) {
+    if (!test_video_exists()) GTEST_SKIP() << "test video not found";
+
+    auto pipeline = cuframe::Pipeline::builder()
+        .input(TEST_VIDEO)
+        .resize(256, 256, cuframe::ResizeMode::STRETCH)
+        .center_crop(224, 224)
+        .normalize({0.485f, 0.456f, 0.406f}, {0.229f, 0.224f, 0.225f})
+        .batch(8)
+        .build();
+
+    int total_frames = 0;
+    while (auto batch = pipeline.next()) {
+        auto& b = *batch;
+        EXPECT_EQ(b->channels(), 3);
+        EXPECT_EQ(b->height(), 224);
+        EXPECT_EQ(b->width(), 224);
+        EXPECT_GT(b->count(), 0);
+        EXPECT_LE(b->count(), 8);
+
+        // spot-check values in normalized range
+        size_t n = static_cast<size_t>(b->count()) * 3 * 224 * 224;
+        std::vector<float> host(n);
+        CUFRAME_CUDA_CHECK(cudaMemcpy(host.data(), b->data(),
+                                       n * sizeof(float), cudaMemcpyDeviceToHost));
+        for (size_t i = 0; i < n; i += 97) {
+            EXPECT_GT(host[i], -5.0f);
+            EXPECT_LT(host[i], 5.0f);
+        }
+
+        total_frames += b->count();
+    }
+
+    EXPECT_EQ(total_frames, 90);
+}
+
+// ============================================================================
+// center crop only — no explicit resize, crop from source resolution
+// ============================================================================
+
+TEST(PipelineTest, CenterCropOnly) {
+    if (!test_video_exists()) GTEST_SKIP() << "test video not found";
+
+    auto pipeline = cuframe::Pipeline::builder()
+        .input(TEST_VIDEO)
+        .center_crop(200, 200)
+        .normalize({0.485f, 0.456f, 0.406f}, {0.229f, 0.224f, 0.225f})
+        .batch(4)
+        .build();
+
+    auto batch = pipeline.next();
+    ASSERT_TRUE(batch.has_value());
+
+    auto& b = *batch;
+    EXPECT_EQ(b->height(), 200);
+    EXPECT_EQ(b->width(), 200);
+    EXPECT_EQ(b->channels(), 3);
+    EXPECT_EQ(b->count(), 4);
+}
+
+// ============================================================================
+// center crop config — builder stores values correctly
+// ============================================================================
+
+TEST(PipelineTest, CenterCropConfig) {
+    if (!test_video_exists()) GTEST_SKIP() << "test video not found";
+
+    auto pipeline = cuframe::Pipeline::builder()
+        .input(TEST_VIDEO)
+        .resize(256, 256, cuframe::ResizeMode::STRETCH)
+        .center_crop(224, 224)
+        .normalize({0.485f, 0.456f, 0.406f}, {0.229f, 0.224f, 0.225f})
+        .batch(1)
+        .build();
+
+    auto& cfg = pipeline.config();
+    EXPECT_TRUE(cfg.has_center_crop);
+    EXPECT_EQ(cfg.crop_width, 224);
+    EXPECT_EQ(cfg.crop_height, 224);
+    EXPECT_TRUE(cfg.has_resize);
+    EXPECT_EQ(cfg.resize_width, 256);
+}
+
+// ============================================================================
+// center crop error — crop larger than resize target
+// ============================================================================
+
+TEST(PipelineTest, CenterCropErrorTooLarge) {
+    if (!test_video_exists()) GTEST_SKIP() << "test video not found";
+
+    EXPECT_THROW(
+        cuframe::Pipeline::builder()
+            .input(TEST_VIDEO)
+            .resize(256, 256, cuframe::ResizeMode::STRETCH)
+            .center_crop(300, 300)
+            .build(),
+        std::invalid_argument
+    );
+}
