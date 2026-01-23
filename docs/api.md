@@ -19,7 +19,7 @@ auto pipeline = cuframe::Pipeline::builder()
     .build();
 ```
 
-**`input(const std::string& path)`** — video file path. required. supports any container FFmpeg can demux (MP4, MKV, AVI, etc.) with H.264 or HEVC video.
+**`input(const std::string& path)`** — video file path. required. supports any container FFmpeg can demux (MP4, MKV, WebM, MOV, AVI, etc.) with H.264, H.265/HEVC, VP9, or AV1 video.
 
 **`resize(int width, int height, ResizeMode mode, float pad_value)`** — optional. resize all frames to the target dimensions.
 - `ResizeMode::LETTERBOX` (default) — scale to fit preserving aspect ratio, center the image, pad borders with `pad_value`

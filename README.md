@@ -53,7 +53,7 @@ while (auto batch = pipeline.next()) {
 
 ## features
 
-- **NVDEC hardware decode** — H.264/HEVC decoded by dedicated GPU hardware, frames land directly in GPU memory
+- **NVDEC hardware decode** — H.264, H.265/HEVC, VP9, and AV1 decoded by dedicated GPU hardware, frames land directly in GPU memory
 - **fused preprocessing kernel** — NV12 color conversion + bilinear resize + normalize in a single kernel pass. no intermediate buffers, no extra kernel launches.
 - **auto color matrix** — BT.601 for SD (≤720p), BT.709 for HD (>720p), overridable
 - **RGB/BGR channel order** — default RGB, switchable to BGR for OpenCV-convention models

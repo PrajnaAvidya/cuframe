@@ -18,7 +18,7 @@ struct VideoInfo {
     AVCodecID codec_id = AV_CODEC_ID_NONE;
     AVRational time_base = {0, 1};
     int64_t num_frames = -1;            // -1 if unknown
-    std::vector<uint8_t> extradata;     // codec config (SPS/PPS for h264, VPS/SPS/PPS for hevc)
+    std::vector<uint8_t> extradata;     // codec config (SPS/PPS for h264, VPS/SPS/PPS for hevc, etc.)
 };
 
 class Demuxer {
