@@ -63,24 +63,26 @@ struct Pipeline::Impl {
         int w = frame.width, h = frame.height;
         unsigned int pitch = frame.pitch;
 
+        bool is_10bit = frame.bit_depth > 8;
+
         if (use_fused) {
             fused_nv12_to_tensor(nv12, out_buf, w, h, pitch,
                 resize_params, config.color_matrix, config.norm,
-                config.bgr, stream);
+                config.bgr, is_10bit, stream);
         } else if (config.has_resize || config.has_center_crop) {
             // color convert → resize (or crop)
             nv12_to_rgb_planar(nv12, rgb_buf, w, h, pitch,
-                               config.color_matrix, config.bgr, stream);
+                               config.color_matrix, config.bgr, is_10bit, stream);
             resize_bilinear(rgb_buf, out_buf, resize_params, stream);
         } else if (config.has_normalize) {
             // color convert → normalize in-place
             nv12_to_rgb_planar(nv12, out_buf, w, h, pitch,
-                               config.color_matrix, config.bgr, stream);
+                               config.color_matrix, config.bgr, is_10bit, stream);
             cuframe::normalize(out_buf, out_buf, w, h, config.norm, stream);
         } else {
             // color convert only
             nv12_to_rgb_planar(nv12, out_buf, w, h, pitch,
-                               config.color_matrix, config.bgr, stream);
+                               config.color_matrix, config.bgr, is_10bit, stream);
         }
         CUFRAME_NVTX_POP();
     }

@@ -3,16 +3,27 @@
 
 namespace cuframe {
 
-// read one NV12 pixel, apply color matrix, return clamped RGB
+// read one NV12/P016 pixel, apply color matrix, return clamped RGB.
+// is_10bit: P016 has 16-bit MSB-aligned samples, >> 8 maps to [0, 255].
+// branch is uniform (all threads same value) so zero divergence cost.
 __device__ inline float3 nv12_to_rgb(
-    const uint8_t* nv12, int x, int y,
-    int src_h, unsigned int pitch,
+    const uint8_t* frame, int x, int y,
+    int src_h, unsigned int pitch, bool is_10bit,
     float3 coeff_r, float3 coeff_g, float3 coeff_b
 ) {
-    float Y = (float)nv12[y * pitch + x];
-    int chroma_off = pitch * src_h + (y / 2) * pitch + (x / 2) * 2;
-    float U = (float)nv12[chroma_off] - 128.0f;
-    float V = (float)nv12[chroma_off + 1] - 128.0f;
+    float Y, U, V;
+    if (is_10bit) {
+        auto* y_row = (const uint16_t*)(frame + y * pitch);
+        Y = (float)(y_row[x] >> 8);
+        auto* uv_row = (const uint16_t*)(frame + pitch * src_h + (y / 2) * pitch);
+        U = (float)(uv_row[(x / 2) * 2] >> 8) - 128.0f;
+        V = (float)(uv_row[(x / 2) * 2 + 1] >> 8) - 128.0f;
+    } else {
+        Y = (float)frame[y * pitch + x];
+        int chroma_off = pitch * src_h + (y / 2) * pitch + (x / 2) * 2;
+        U = (float)frame[chroma_off] - 128.0f;
+        V = (float)frame[chroma_off + 1] - 128.0f;
+    }
 
     return make_float3(
         fminf(fmaxf(Y * coeff_r.x + U * coeff_r.y + V * coeff_r.z, 0.0f), 255.0f),
@@ -32,7 +43,7 @@ __global__ void fused_nv12_to_tensor_kernel(
     float norm_scale_r, float norm_bias_r,
     float norm_scale_g, float norm_bias_g,
     float norm_scale_b, float norm_bias_b,
-    bool bgr
+    bool bgr, bool is_10bit
 ) {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
@@ -67,11 +78,11 @@ __global__ void fused_nv12_to_tensor_kernel(
     x0 = max(x0, 0);
     y0 = max(y0, 0);
 
-    // color convert 4 NV12 sample points to RGB
-    float3 c00 = nv12_to_rgb(nv12, x0, y0, src_h, src_pitch, coeff_r, coeff_g, coeff_b);
-    float3 c01 = nv12_to_rgb(nv12, x1, y0, src_h, src_pitch, coeff_r, coeff_g, coeff_b);
-    float3 c10 = nv12_to_rgb(nv12, x0, y1, src_h, src_pitch, coeff_r, coeff_g, coeff_b);
-    float3 c11 = nv12_to_rgb(nv12, x1, y1, src_h, src_pitch, coeff_r, coeff_g, coeff_b);
+    // color convert 4 sample points to RGB
+    float3 c00 = nv12_to_rgb(nv12, x0, y0, src_h, src_pitch, is_10bit, coeff_r, coeff_g, coeff_b);
+    float3 c01 = nv12_to_rgb(nv12, x1, y0, src_h, src_pitch, is_10bit, coeff_r, coeff_g, coeff_b);
+    float3 c10 = nv12_to_rgb(nv12, x0, y1, src_h, src_pitch, is_10bit, coeff_r, coeff_g, coeff_b);
+    float3 c11 = nv12_to_rgb(nv12, x1, y1, src_h, src_pitch, is_10bit, coeff_r, coeff_g, coeff_b);
 
     // bilinear interpolation in RGB space
     float w00 = (1 - fx) * (1 - fy);
@@ -93,7 +104,7 @@ void fused_nv12_to_tensor(
     const uint8_t* nv12_ptr, float* rgb_ptr,
     int src_w, int src_h, unsigned int src_pitch,
     const ResizeParams& r, const ColorMatrix& c, const NormParams& n,
-    bool bgr, cudaStream_t stream
+    bool bgr, bool is_10bit, cudaStream_t stream
 ) {
     dim3 block(32, 8);
     dim3 grid(
@@ -111,7 +122,7 @@ void fused_nv12_to_tensor(
         n.scale[0], n.bias[0],
         n.scale[1], n.bias[1],
         n.scale[2], n.bias[2],
-        bgr
+        bgr, is_10bit
     );
     CUFRAME_CUDA_CHECK(cudaGetLastError());
 }

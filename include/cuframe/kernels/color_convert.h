@@ -27,6 +27,7 @@ void nv12_to_rgb_planar(
     int width, int height, unsigned int pitch,
     const ColorMatrix& matrix,
     bool bgr = false,
+    bool is_10bit = false,
     cudaStream_t stream = nullptr
 );
 

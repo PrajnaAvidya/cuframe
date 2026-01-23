@@ -97,10 +97,14 @@ int Decoder::on_sequence(CUVIDEOFORMAT* fmt) {
     height_ = fmt->display_area.bottom - fmt->display_area.top;
     surface_height_ = fmt->coded_height;
 
+    bit_depth_ = fmt->bit_depth_luma_minus8 + 8;
+
     CUVIDDECODECREATEINFO ci = {};
     ci.CodecType = fmt->codec;
     ci.ChromaFormat = fmt->chroma_format;
-    ci.OutputFormat = cudaVideoSurfaceFormat_NV12;
+    ci.OutputFormat = (bit_depth_ > 8)
+        ? cudaVideoSurfaceFormat_P016
+        : cudaVideoSurfaceFormat_NV12;
     ci.bitDepthMinus8 = fmt->bit_depth_luma_minus8;
     ci.DeinterlaceMode = fmt->progressive_sequence
         ? cudaVideoDeinterlaceMode_Weave
@@ -187,7 +191,8 @@ int Decoder::on_display(CUVIDPARSERDISPINFO* disp) {
     cuCtxPopCurrent(nullptr);
 
     pending_frames_.push_back(DecodedFrame{
-        std::move(buf), width_, height_, src_pitch, disp->timestamp, stream_
+        std::move(buf), width_, height_, src_pitch, disp->timestamp, stream_,
+        bit_depth_
     });
 
     return 1;

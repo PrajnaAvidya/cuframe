@@ -416,3 +416,169 @@ TEST(CodecSupport, AV1_MP4_PipelineFused) {
     EXPECT_GT(total_frames, 60);
     EXPECT_LT(total_frames, 150);
 }
+
+// ============================================================================
+// HEVC 10-bit (P016 surface format)
+// ============================================================================
+
+static const char* TEST_HEVC_10BIT = "tests/data/test_hevc_10bit.mp4";
+
+TEST(CodecSupport, HEVC_10bit_Demuxer) {
+    if (!file_exists(TEST_HEVC_10BIT)) GTEST_SKIP() << "test video not found";
+
+    cuframe::Demuxer demuxer(TEST_HEVC_10BIT);
+    auto& info = demuxer.video_info();
+
+    EXPECT_EQ(info.codec_id, AV_CODEC_ID_HEVC);
+    EXPECT_EQ(info.width, 320);
+    EXPECT_EQ(info.height, 240);
+    EXPECT_FALSE(info.extradata.empty());
+
+    AVPacket* pkt = av_packet_alloc();
+    int count = 0;
+    while (demuxer.read_packet(pkt)) {
+        count++;
+        av_packet_unref(pkt);
+    }
+    av_packet_free(&pkt);
+
+    EXPECT_GT(count, 60);
+    EXPECT_LT(count, 150);
+}
+
+TEST(CodecSupport, HEVC_10bit_Decoder) {
+    if (!file_exists(TEST_HEVC_10BIT)) GTEST_SKIP() << "test video not found";
+
+    cuframe::Demuxer demuxer(TEST_HEVC_10BIT);
+    cuframe::Decoder decoder(demuxer.video_info(), 150);
+
+    std::vector<cuframe::DecodedFrame> frames;
+    AVPacket* pkt = av_packet_alloc();
+    while (demuxer.read_packet(pkt)) {
+        decoder.decode(pkt, frames);
+        av_packet_unref(pkt);
+    }
+    av_packet_free(&pkt);
+    decoder.flush(frames);
+
+    EXPECT_GT(frames.size(), 60u);
+    EXPECT_LT(frames.size(), 150u);
+
+    for (auto& f : frames) {
+        EXPECT_EQ(f.width, 320);
+        EXPECT_EQ(f.height, 240);
+        EXPECT_GT(f.pitch, 0u);
+        EXPECT_EQ(f.bit_depth, 10);
+    }
+
+    // spot-check frame data non-zero
+    uint8_t host_buf[64] = {};
+    cudaMemcpy(host_buf, frames[0].buffer->data(), sizeof(host_buf),
+               cudaMemcpyDeviceToHost);
+    bool all_zero = true;
+    for (auto b : host_buf) { if (b != 0) { all_zero = false; break; } }
+    EXPECT_FALSE(all_zero) << "decoded 10-bit HEVC frame data is all zeros";
+}
+
+TEST(CodecSupport, HEVC_10bit_PipelineFused) {
+    if (!file_exists(TEST_HEVC_10BIT)) GTEST_SKIP() << "test video not found";
+
+    auto pipeline = cuframe::Pipeline::builder()
+        .input(TEST_HEVC_10BIT)
+        .resize(640, 640)
+        .normalize({0.485f, 0.456f, 0.406f}, {0.229f, 0.224f, 0.225f})
+        .batch(8)
+        .build();
+
+    int total_frames = 0;
+    while (auto batch = pipeline.next()) {
+        auto& b = *batch;
+        EXPECT_EQ(b->channels(), 3);
+        EXPECT_EQ(b->height(), 640);
+        EXPECT_EQ(b->width(), 640);
+
+        size_t n = static_cast<size_t>(b->count()) * 3 * 640 * 640;
+        std::vector<float> host(n);
+        CUFRAME_CUDA_CHECK(cudaMemcpy(host.data(), b->data(),
+                                       n * sizeof(float), cudaMemcpyDeviceToHost));
+        for (size_t i = 0; i < n; i += 97) {
+            EXPECT_GT(host[i], -5.0f);
+            EXPECT_LT(host[i], 5.0f);
+        }
+
+        total_frames += b->count();
+    }
+
+    EXPECT_GT(total_frames, 60);
+    EXPECT_LT(total_frames, 150);
+}
+
+TEST(CodecSupport, HEVC_10bit_PipelineColorConvert) {
+    if (!file_exists(TEST_HEVC_10BIT)) GTEST_SKIP() << "test video not found";
+
+    auto pipeline = cuframe::Pipeline::builder()
+        .input(TEST_HEVC_10BIT)
+        .batch(4)
+        .build();
+
+    auto batch = pipeline.next();
+    ASSERT_TRUE(batch.has_value());
+
+    auto& b = *batch;
+    EXPECT_EQ(b->height(), 240);
+    EXPECT_EQ(b->width(), 320);
+    EXPECT_EQ(b->channels(), 3);
+    EXPECT_EQ(b->count(), 4);
+
+    size_t total = static_cast<size_t>(b->count()) * 3 * 240 * 320;
+    std::vector<float> host(total);
+    CUFRAME_CUDA_CHECK(cudaMemcpy(host.data(), b->data(),
+                                   total * sizeof(float), cudaMemcpyDeviceToHost));
+    for (size_t i = 0; i < total; i += 97) {
+        EXPECT_GE(host[i], -1.0f);
+        EXPECT_LE(host[i], 256.0f);
+    }
+}
+
+// 8-bit vs 10-bit comparison — same visual content, RGB should be close
+TEST(CodecSupport, HEVC_10bit_MatchesEightBit) {
+    if (!file_exists(TEST_HEVC_MP4) || !file_exists(TEST_HEVC_10BIT))
+        GTEST_SKIP() << "test videos not found";
+
+    auto pipeline_8 = cuframe::Pipeline::builder()
+        .input(TEST_HEVC_MP4)
+        .resize(320, 240, cuframe::ResizeMode::STRETCH)
+        .batch(1)
+        .build();
+
+    auto pipeline_10 = cuframe::Pipeline::builder()
+        .input(TEST_HEVC_10BIT)
+        .resize(320, 240, cuframe::ResizeMode::STRETCH)
+        .batch(1)
+        .build();
+
+    auto batch_8 = pipeline_8.next();
+    auto batch_10 = pipeline_10.next();
+    ASSERT_TRUE(batch_8.has_value());
+    ASSERT_TRUE(batch_10.has_value());
+
+    size_t total = 3ULL * 320 * 240;
+    std::vector<float> host_8(total), host_10(total);
+    CUFRAME_CUDA_CHECK(cudaMemcpy(host_8.data(), (*batch_8)->data(),
+                                   total * sizeof(float), cudaMemcpyDeviceToHost));
+    CUFRAME_CUDA_CHECK(cudaMemcpy(host_10.data(), (*batch_10)->data(),
+                                   total * sizeof(float), cudaMemcpyDeviceToHost));
+
+    // same testsrc content encoded at different bit depths — should produce
+    // similar RGB values. allow tolerance for encoding/quantization differences.
+    float max_diff = 0.0f;
+    for (size_t i = 0; i < total; i++) {
+        float diff = std::abs(host_8[i] - host_10[i]);
+        if (diff > max_diff) max_diff = diff;
+    }
+
+    // encoders quantize differently so diffs can be noticeable, but should
+    // stay well under half the [0, 255] range
+    EXPECT_LT(max_diff, 50.0f)
+        << "8-bit vs 10-bit RGB differ too much (max diff=" << max_diff << ")";
+}

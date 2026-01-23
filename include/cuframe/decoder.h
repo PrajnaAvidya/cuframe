@@ -13,12 +13,13 @@
 namespace cuframe {
 
 struct DecodedFrame {
-    PooledBuffer buffer;    // borrows NV12 data from pool, auto-returns
+    PooledBuffer buffer;    // borrows NV12/P016 data from pool, auto-returns
     int width = 0;
     int height = 0;
     unsigned int pitch = 0; // row stride in bytes (from cuvidMapVideoFrame)
     int64_t timestamp = 0;
     CUstream stream = nullptr;  // stream the frame data was produced on
+    int bit_depth = 8;      // 8 for NV12, 10+ for P016
 };
 
 class Decoder {
@@ -60,6 +61,7 @@ private:
     unsigned int surface_height_ = 0;  // coded height (may differ from display)
 
     int pool_count_ = 8;
+    int bit_depth_ = 8;
     std::unique_ptr<FramePool> pool_;
     std::vector<DecodedFrame> pending_frames_;
 };

@@ -19,20 +19,27 @@ __global__ void nv12_to_rgb_planar_kernel(
     const uint8_t* nv12, float* rgb,
     int width, int height, unsigned int pitch,
     float3 coeff_r, float3 coeff_g, float3 coeff_b,
-    bool bgr
+    bool bgr, bool is_10bit
 ) {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
     if (x >= width || y >= height) return;
 
-    // Y from luma plane
-    float Y = (float)nv12[y * pitch + x];
-
-    // UV from chroma plane (starts at pitch * height, interleaved UVUV)
-    int chroma_offset = pitch * height;
-    int uv_x = (x / 2) * 2;
-    float U = (float)nv12[chroma_offset + (y / 2) * pitch + uv_x] - 128.0f;
-    float V = (float)nv12[chroma_offset + (y / 2) * pitch + uv_x + 1] - 128.0f;
+    // read YUV — P016 uses 16-bit samples, >> 8 to map to [0, 255]
+    float Y, U, V;
+    if (is_10bit) {
+        auto* y_row = (const uint16_t*)(nv12 + y * pitch);
+        Y = (float)(y_row[x] >> 8);
+        auto* uv_row = (const uint16_t*)(nv12 + pitch * height + (y / 2) * pitch);
+        U = (float)(uv_row[(x / 2) * 2] >> 8) - 128.0f;
+        V = (float)(uv_row[(x / 2) * 2 + 1] >> 8) - 128.0f;
+    } else {
+        Y = (float)nv12[y * pitch + x];
+        int chroma_offset = pitch * height;
+        int uv_x = (x / 2) * 2;
+        U = (float)nv12[chroma_offset + (y / 2) * pitch + uv_x] - 128.0f;
+        V = (float)nv12[chroma_offset + (y / 2) * pitch + uv_x + 1] - 128.0f;
+    }
 
     // apply color matrix, clamp to [0, 255]
     float R = fminf(fmaxf(Y * coeff_r.x + U * coeff_r.y + V * coeff_r.z, 0.0f), 255.0f);
@@ -52,14 +59,14 @@ __global__ void nv12_to_rgb_planar_kernel(
 void nv12_to_rgb_planar(
     const uint8_t* nv12_ptr, float* rgb_ptr,
     int width, int height, unsigned int pitch,
-    const ColorMatrix& matrix, bool bgr, cudaStream_t stream
+    const ColorMatrix& matrix, bool bgr, bool is_10bit, cudaStream_t stream
 ) {
     dim3 block(32, 8);
     dim3 grid((width + block.x - 1) / block.x, (height + block.y - 1) / block.y);
     nv12_to_rgb_planar_kernel<<<grid, block, 0, stream>>>(
         nv12_ptr, rgb_ptr, width, height, pitch,
         matrix.r, matrix.g, matrix.b,
-        bgr
+        bgr, is_10bit
     );
     CUFRAME_CUDA_CHECK(cudaGetLastError());
 }
