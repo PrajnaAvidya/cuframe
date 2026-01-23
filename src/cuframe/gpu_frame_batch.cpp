@@ -1,4 +1,5 @@
 #include "cuframe/gpu_frame_batch.h"
+#include "cuframe/nvtx.h"
 #include "cuframe/cuda_utils.h"
 #include <stdexcept>
 
@@ -43,6 +44,7 @@ void batch_frames(
     int n,
     cudaStream_t stream
 ) {
+    CUFRAME_NVTX_PUSH("cuframe::batch");
     for (int i = 0; i < n; ++i) {
         CUFRAME_CUDA_CHECK(cudaMemcpyAsync(
             batch.frame(i),
@@ -52,6 +54,7 @@ void batch_frames(
             stream
         ));
     }
+    CUFRAME_NVTX_POP();
 }
 
 } // namespace cuframe

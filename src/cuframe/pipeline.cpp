@@ -1,4 +1,5 @@
 #include "cuframe/pipeline.h"
+#include "cuframe/nvtx.h"
 #include "cuframe/batch_pool.h"
 #include "cuframe/demuxer.h"
 #include "cuframe/decoder.h"
@@ -57,6 +58,7 @@ struct Pipeline::Impl {
 
     void preprocess(const DecodedFrame& frame, float* out_buf,
                     float* rgb_buf, cudaStream_t stream) const {
+        CUFRAME_NVTX_PUSH("cuframe::preprocess");
         auto* nv12 = static_cast<const uint8_t*>(frame.buffer->data());
         int w = frame.width, h = frame.height;
         unsigned int pitch = frame.pitch;
@@ -80,11 +82,13 @@ struct Pipeline::Impl {
             nv12_to_rgb_planar(nv12, out_buf, w, h, pitch,
                                config.color_matrix, config.bgr, stream);
         }
+        CUFRAME_NVTX_POP();
     }
 
     // pre-decode frames for the next batch while preprocess stream is busy on GPU
     void prefetch() {
         if (flushed) return;
+        CUFRAME_NVTX_PUSH("cuframe::prefetch");
 
         int target = config.batch_size;
         int have = static_cast<int>(pending.size()) - pending_idx;
@@ -99,6 +103,7 @@ struct Pipeline::Impl {
             av_packet_unref(packet);
             have = static_cast<int>(pending.size()) - pending_idx;
         }
+        CUFRAME_NVTX_POP();
     }
 
     ~Impl() {
@@ -130,6 +135,7 @@ std::optional<std::shared_ptr<GpuFrameBatch>> Pipeline::next() {
     auto& s = *impl_;
     if (s.eos) return std::nullopt;
 
+    CUFRAME_NVTX_PUSH("cuframe::next");
     CUFRAME_CUDA_CHECK(cudaSetDevice(s.config.device_id));
 
     auto batch = s.batch_pool->acquire();
@@ -177,6 +183,7 @@ std::optional<std::shared_ptr<GpuFrameBatch>> Pipeline::next() {
 
     if (collected == 0) {
         s.eos = true;
+        CUFRAME_NVTX_POP();
         return std::nullopt;
     }
 
@@ -191,6 +198,7 @@ std::optional<std::shared_ptr<GpuFrameBatch>> Pipeline::next() {
 
     CUFRAME_CUDA_CHECK(cudaStreamSynchronize(s.preprocess_stream));
     batch->set_count(collected);
+    CUFRAME_NVTX_POP();
     return batch;
 }
 

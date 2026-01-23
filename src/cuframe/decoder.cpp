@@ -1,4 +1,5 @@
 #include "cuframe/decoder.h"
+#include "cuframe/nvtx.h"
 #include "cuframe/cuda_utils.h"
 
 #include <stdexcept>
@@ -49,6 +50,7 @@ Decoder::~Decoder() {
 }
 
 void Decoder::decode(const AVPacket* packet, std::vector<DecodedFrame>& out) {
+    CUFRAME_NVTX_PUSH("cuframe::decode");
     CUVIDSOURCEDATAPACKET cupkt = {};
     cupkt.payload = packet->data;
     cupkt.payload_size = packet->size;
@@ -61,6 +63,7 @@ void Decoder::decode(const AVPacket* packet, std::vector<DecodedFrame>& out) {
     for (auto& f : pending_frames_)
         out.push_back(std::move(f));
     pending_frames_.clear();
+    CUFRAME_NVTX_POP();
 }
 
 void Decoder::flush(std::vector<DecodedFrame>& out) {
