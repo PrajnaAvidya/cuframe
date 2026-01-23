@@ -38,6 +38,9 @@ struct PipelineConfig {
     // channel order
     bool bgr = false;
 
+    // device
+    int device_id = 0;
+
     // batching
     int batch_size = 1;
 
@@ -59,6 +62,7 @@ public:
     PipelineBuilder& color_matrix(const ColorMatrix& matrix);
     PipelineBuilder& center_crop(int width, int height);
     PipelineBuilder& channel_order_bgr(bool bgr = true);
+    PipelineBuilder& device(int gpu_id);
 
     Pipeline build();
 

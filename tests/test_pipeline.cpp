@@ -498,3 +498,89 @@ TEST(PipelineTest, CenterCropErrorTooLarge) {
         std::invalid_argument
     );
 }
+
+// ============================================================================
+// device selection — config stores device_id
+// ============================================================================
+
+TEST(PipelineTest, DeviceConfig) {
+    if (!test_video_exists()) GTEST_SKIP() << "test video not found";
+
+    auto pipeline = cuframe::Pipeline::builder()
+        .input(TEST_VIDEO)
+        .device(0)
+        .batch(1)
+        .build();
+
+    EXPECT_EQ(pipeline.config().device_id, 0);
+}
+
+// ============================================================================
+// device selection — default is 0
+// ============================================================================
+
+TEST(PipelineTest, DeviceDefault) {
+    if (!test_video_exists()) GTEST_SKIP() << "test video not found";
+
+    auto pipeline = cuframe::Pipeline::builder()
+        .input(TEST_VIDEO)
+        .batch(1)
+        .build();
+
+    EXPECT_EQ(pipeline.config().device_id, 0);
+}
+
+// ============================================================================
+// device selection — invalid device throws
+// ============================================================================
+
+TEST(PipelineTest, DeviceInvalid) {
+    if (!test_video_exists()) GTEST_SKIP() << "test video not found";
+
+    EXPECT_THROW(
+        cuframe::Pipeline::builder()
+            .input(TEST_VIDEO)
+            .device(999)
+            .batch(1)
+            .build(),
+        std::runtime_error
+    );
+}
+
+// ============================================================================
+// multi-GPU — pipeline on device 1 (skipped if < 2 GPUs)
+// ============================================================================
+
+TEST(PipelineTest, MultiGPU) {
+    if (!test_video_exists()) GTEST_SKIP() << "test video not found";
+
+    int device_count = 0;
+    cudaGetDeviceCount(&device_count);
+    if (device_count < 2) GTEST_SKIP() << "need >= 2 GPUs";
+
+    auto pipeline = cuframe::Pipeline::builder()
+        .input(TEST_VIDEO)
+        .resize(320, 320)
+        .normalize({0.485f, 0.456f, 0.406f}, {0.229f, 0.224f, 0.225f})
+        .device(1)
+        .batch(4)
+        .build();
+
+    EXPECT_EQ(pipeline.config().device_id, 1);
+
+    auto batch = pipeline.next();
+    ASSERT_TRUE(batch.has_value());
+    EXPECT_EQ((*batch)->count(), 4);
+
+    // verify data is accessible from device 1
+    size_t n = 4ULL * 3 * 320 * 320;
+    std::vector<float> host(n);
+    CUFRAME_CUDA_CHECK(cudaSetDevice(1));
+    CUFRAME_CUDA_CHECK(cudaMemcpy(host.data(), (*batch)->data(),
+                                   n * sizeof(float), cudaMemcpyDeviceToHost));
+
+    for (size_t i = 0; i < n; i += 97) {
+        EXPECT_GT(host[i], -5.0f);
+        EXPECT_LT(host[i], 5.0f);
+    }
+}

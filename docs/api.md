@@ -45,6 +45,8 @@ auto pipeline = cuframe::Pipeline::builder()
 
 **`channel_order_bgr(bool bgr = true)`** — optional. output BGR channel order instead of RGB. use for models trained with OpenCV defaults (Caffe, PaddlePaddle, some YOLO variants). default is RGB.
 
+**`device(int gpu_id)`** — optional (default 0). select which GPU to run on. all decode, preprocessing, and output buffers are allocated on this device. for multi-GPU setups, create one pipeline per GPU. invalid device IDs throw `std::runtime_error` at build time.
+
 **`build()`** — creates the pipeline. opens the video file, initializes the decoder, allocates all GPU buffers. throws `std::invalid_argument` if no input path is set, `std::runtime_error` if the file can't be opened or decoded.
 
 ### Pipeline
@@ -86,6 +88,8 @@ struct PipelineConfig {
     NormParams norm{};
     bool auto_color_matrix = true;
     ColorMatrix color_matrix{};
+    bool bgr = false;
+    int device_id = 0;
     int batch_size = 1;
     int pool_size = 2;
 };

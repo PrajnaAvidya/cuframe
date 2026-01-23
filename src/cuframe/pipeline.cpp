@@ -102,6 +102,8 @@ struct Pipeline::Impl {
     }
 
     ~Impl() {
+        // best-effort device restore for member destructors (no throw in dtor)
+        cudaSetDevice(config.device_id);
         // release PooledBuffers before decoder dies
         pending.clear();
         for (auto* p : rgb_bufs) cudaFree(p);
@@ -127,6 +129,8 @@ PipelineBuilder Pipeline::builder() { return PipelineBuilder{}; }
 std::optional<std::shared_ptr<GpuFrameBatch>> Pipeline::next() {
     auto& s = *impl_;
     if (s.eos) return std::nullopt;
+
+    CUFRAME_CUDA_CHECK(cudaSetDevice(s.config.device_id));
 
     auto batch = s.batch_pool->acquire();
     int collected = 0;
@@ -244,11 +248,18 @@ PipelineBuilder& PipelineBuilder::channel_order_bgr(bool bgr) {
     return *this;
 }
 
+PipelineBuilder& PipelineBuilder::device(int gpu_id) {
+    config_.device_id = gpu_id;
+    return *this;
+}
+
 Pipeline PipelineBuilder::build() {
     if (config_.input_path.empty())
         throw std::invalid_argument("pipeline: input path required");
     if (config_.batch_size < 1)
         throw std::invalid_argument("pipeline: batch size must be >= 1");
+
+    CUFRAME_CUDA_CHECK(cudaSetDevice(config_.device_id));
 
     auto demuxer = std::make_unique<Demuxer>(config_.input_path);
     auto& info = demuxer->video_info();
