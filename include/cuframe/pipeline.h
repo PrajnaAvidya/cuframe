@@ -7,10 +7,20 @@
 #include <array>
 #include <memory>
 #include <optional>
+#include <cstdint>
 
 namespace cuframe {
 
 enum class ResizeMode { STRETCH, LETTERBOX };
+
+// lightweight descriptor for a retained NV12 frame on device.
+// valid from the Pipeline::next() call that produced it until the next next() call.
+struct RetainedFrame {
+    const uint8_t* data = nullptr;  // NV12 data on device
+    int width = 0;
+    int height = 0;
+    unsigned int pitch = 0;
+};
 
 struct PipelineConfig {
     std::string input_path;
@@ -38,6 +48,9 @@ struct PipelineConfig {
     // channel order
     bool bgr = false;
 
+    // retain decoded NV12 frames for ROI crop
+    bool retain_decoded = false;
+
     // device
     int device_id = 0;
 
@@ -62,6 +75,7 @@ public:
     PipelineBuilder& color_matrix(const ColorMatrix& matrix);
     PipelineBuilder& center_crop(int width, int height);
     PipelineBuilder& channel_order_bgr(bool bgr = true);
+    PipelineBuilder& retain_decoded(bool retain = true);
     PipelineBuilder& device(int gpu_id);
 
     Pipeline build();
@@ -80,6 +94,12 @@ public:
     std::optional<std::shared_ptr<GpuFrameBatch>> next();
 
     const PipelineConfig& config() const;
+
+    // retained NV12 frames from the most recent next() call.
+    // only populated when retain_decoded(true) was set on the builder.
+    // valid until the next next() call. i is batch index [0, retained_count()).
+    const RetainedFrame& retained_frame(int i) const;
+    int retained_count() const;
 
     ~Pipeline();
     Pipeline(Pipeline&&) noexcept;

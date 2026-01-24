@@ -42,6 +42,13 @@ struct Pipeline::Impl {
     std::vector<float*> rgb_bufs;   // only for separate path with resize
     std::vector<float*> out_bufs;   // preprocessed output, one per batch slot
 
+    // retained NV12 (only when config.retain_decoded)
+    bool retained_allocated = false;
+    std::vector<uint8_t*> retained_nv12;
+    std::vector<RetainedFrame> retained_meta;
+    size_t retained_frame_bytes = 0;
+    int retained_count_ = 0;
+
     // output
     std::unique_ptr<BatchPool> batch_pool;
 
@@ -113,6 +120,7 @@ struct Pipeline::Impl {
         cudaSetDevice(config.device_id);
         // release PooledBuffers before decoder dies
         pending.clear();
+        for (auto* p : retained_nv12) cudaFree(p);
         for (auto* p : rgb_bufs) cudaFree(p);
         for (auto* p : out_bufs) cudaFree(p);
         if (preprocess_stream) cudaStreamDestroy(preprocess_stream);
@@ -131,6 +139,14 @@ Pipeline& Pipeline::operator=(Pipeline&&) noexcept = default;
 
 const PipelineConfig& Pipeline::config() const { return impl_->config; }
 
+const RetainedFrame& Pipeline::retained_frame(int i) const {
+    return impl_->retained_meta[i];
+}
+
+int Pipeline::retained_count() const {
+    return impl_->retained_count_;
+}
+
 PipelineBuilder Pipeline::builder() { return PipelineBuilder{}; }
 
 std::optional<std::shared_ptr<GpuFrameBatch>> Pipeline::next() {
@@ -148,8 +164,32 @@ std::optional<std::shared_ptr<GpuFrameBatch>> Pipeline::next() {
         while (s.pending_idx < static_cast<int>(s.pending.size())
                && collected < s.config.batch_size) {
             float* rgb = s.rgb_bufs.empty() ? nullptr : s.rgb_bufs[collected];
-            s.preprocess(s.pending[s.pending_idx],
-                         s.out_bufs[collected], rgb, s.preprocess_stream);
+            auto& frame = s.pending[s.pending_idx];
+            s.preprocess(frame, s.out_bufs[collected], rgb, s.preprocess_stream);
+
+            // retain NV12 copy before releasing pool buffer
+            if (s.config.retain_decoded) {
+                if (!s.retained_allocated) {
+                    unsigned int luma_h = frame.height;
+                    unsigned int chroma_h = (frame.height + 1) / 2;
+                    s.retained_frame_bytes = frame.pitch * (luma_h + chroma_h);
+                    s.retained_nv12.resize(s.config.batch_size, nullptr);
+                    for (int j = 0; j < s.config.batch_size; ++j)
+                        CUFRAME_CUDA_CHECK(cudaMalloc(&s.retained_nv12[j],
+                                                       s.retained_frame_bytes));
+                    s.retained_meta.resize(s.config.batch_size);
+                    s.retained_allocated = true;
+                }
+                CUFRAME_CUDA_CHECK(cudaMemcpyAsync(
+                    s.retained_nv12[collected], frame.buffer->data(),
+                    s.retained_frame_bytes, cudaMemcpyDeviceToDevice,
+                    s.preprocess_stream));
+                s.retained_meta[collected] = {
+                    s.retained_nv12[collected],
+                    frame.width, frame.height, frame.pitch
+                };
+            }
+
             s.pending[s.pending_idx] = {};  // release PooledBuffer to decoder pool
             s.pending_idx++;
             collected++;
@@ -200,6 +240,8 @@ std::optional<std::shared_ptr<GpuFrameBatch>> Pipeline::next() {
 
     CUFRAME_CUDA_CHECK(cudaStreamSynchronize(s.preprocess_stream));
     batch->set_count(collected);
+    if (s.config.retain_decoded)
+        s.retained_count_ = collected;
     CUFRAME_NVTX_POP();
     return batch;
 }
@@ -255,6 +297,11 @@ PipelineBuilder& PipelineBuilder::center_crop(int width, int height) {
 
 PipelineBuilder& PipelineBuilder::channel_order_bgr(bool bgr) {
     config_.bgr = bgr;
+    return *this;
+}
+
+PipelineBuilder& PipelineBuilder::retain_decoded(bool retain) {
+    config_.retain_decoded = retain;
     return *this;
 }
 

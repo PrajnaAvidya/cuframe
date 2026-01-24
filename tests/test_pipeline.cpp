@@ -584,3 +584,132 @@ TEST(PipelineTest, MultiGPU) {
         EXPECT_LT(host[i], 5.0f);
     }
 }
+
+// ============================================================================
+// retain_decoded — retained frame has valid metadata
+// ============================================================================
+
+TEST(PipelineTest, RetainDecoded_HasValidData) {
+    if (!test_video_exists()) GTEST_SKIP() << "test video not found";
+
+    auto pipeline = cuframe::Pipeline::builder()
+        .input(TEST_VIDEO)
+        .resize(DST_W, DST_H)
+        .normalize({0.485f, 0.456f, 0.406f}, {0.229f, 0.224f, 0.225f})
+        .retain_decoded(true)
+        .batch(1)
+        .build();
+
+    EXPECT_TRUE(pipeline.config().retain_decoded);
+
+    auto batch = pipeline.next();
+    ASSERT_TRUE(batch.has_value());
+
+    EXPECT_EQ(pipeline.retained_count(), 1);
+    auto& frame = pipeline.retained_frame(0);
+    EXPECT_NE(frame.data, nullptr);
+    // test video is 320x240
+    EXPECT_EQ(frame.width, 320);
+    EXPECT_EQ(frame.height, 240);
+    EXPECT_GT(frame.pitch, 0u);
+}
+
+// ============================================================================
+// retain_decoded — NV12 content is valid
+// ============================================================================
+
+TEST(PipelineTest, RetainDecoded_NV12ContentValid) {
+    if (!test_video_exists()) GTEST_SKIP() << "test video not found";
+
+    auto pipeline = cuframe::Pipeline::builder()
+        .input(TEST_VIDEO)
+        .resize(DST_W, DST_H)
+        .normalize({0.485f, 0.456f, 0.406f}, {0.229f, 0.224f, 0.225f})
+        .retain_decoded(true)
+        .batch(1)
+        .build();
+
+    auto batch = pipeline.next();
+    ASSERT_TRUE(batch.has_value());
+
+    auto& frame = pipeline.retained_frame(0);
+    unsigned int luma_h = frame.height;
+    unsigned int chroma_h = (frame.height + 1) / 2;
+    size_t nv12_bytes = frame.pitch * (luma_h + chroma_h);
+
+    std::vector<uint8_t> host(nv12_bytes);
+    CUFRAME_CUDA_CHECK(cudaMemcpy(host.data(), frame.data,
+                                   nv12_bytes, cudaMemcpyDeviceToHost));
+
+    // luma values should be in [0, 255] and not all zero
+    bool all_zero = true;
+    for (size_t i = 0; i < luma_h * frame.pitch; i += 37) {
+        if (host[i] != 0) all_zero = false;
+    }
+    EXPECT_FALSE(all_zero) << "NV12 luma plane is all zeros";
+}
+
+// ============================================================================
+// retain_decoded — content changes across batches
+// ============================================================================
+
+TEST(PipelineTest, RetainDecoded_ContentChanges) {
+    if (!test_video_exists()) GTEST_SKIP() << "test video not found";
+
+    auto pipeline = cuframe::Pipeline::builder()
+        .input(TEST_VIDEO)
+        .resize(DST_W, DST_H)
+        .normalize({0.485f, 0.456f, 0.406f}, {0.229f, 0.224f, 0.225f})
+        .retain_decoded(true)
+        .batch(1)
+        .build();
+
+    // read first batch, snapshot full retained NV12
+    auto batch1 = pipeline.next();
+    ASSERT_TRUE(batch1.has_value());
+    auto& f1 = pipeline.retained_frame(0);
+    unsigned int luma_h = f1.height;
+    unsigned int chroma_h = (f1.height + 1) / 2;
+    size_t frame_bytes = f1.pitch * (luma_h + chroma_h);
+    std::vector<uint8_t> snap1(frame_bytes);
+    CUFRAME_CUDA_CHECK(cudaMemcpy(snap1.data(), f1.data,
+                                   frame_bytes, cudaMemcpyDeviceToHost));
+
+    // skip several frames to ensure content differs
+    for (int i = 0; i < 15; ++i) pipeline.next();
+
+    // read another batch
+    auto batch2 = pipeline.next();
+    ASSERT_TRUE(batch2.has_value());
+    auto& f2 = pipeline.retained_frame(0);
+    std::vector<uint8_t> snap2(frame_bytes);
+    CUFRAME_CUDA_CHECK(cudaMemcpy(snap2.data(), f2.data,
+                                   frame_bytes, cudaMemcpyDeviceToHost));
+
+    // retained buffer pointer is reused (same alloc)
+    EXPECT_EQ(f1.data, f2.data);
+    // content should differ somewhere (different frame — testsrc has a frame counter)
+    int diff_count = 0;
+    for (size_t i = 0; i < frame_bytes; i += 1)
+        if (snap1[i] != snap2[i]) ++diff_count;
+    EXPECT_GT(diff_count, 0) << "retained NV12 content should change between batches";
+}
+
+// ============================================================================
+// retain_decoded — disabled by default
+// ============================================================================
+
+TEST(PipelineTest, RetainDecoded_DisabledByDefault) {
+    if (!test_video_exists()) GTEST_SKIP() << "test video not found";
+
+    auto pipeline = cuframe::Pipeline::builder()
+        .input(TEST_VIDEO)
+        .batch(1)
+        .build();
+
+    EXPECT_FALSE(pipeline.config().retain_decoded);
+
+    auto batch = pipeline.next();
+    ASSERT_TRUE(batch.has_value());
+    EXPECT_EQ(pipeline.retained_count(), 0);
+}
