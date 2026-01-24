@@ -51,6 +51,59 @@ while (auto batch = pipeline.next()) {
 }
 ```
 
+## two-stage pipeline (detect + classify)
+
+for pipelines that need to crop regions from the original frame after first-stage inference (e.g., detect objects then classify each one), use `retain_decoded(true)` to keep the raw NV12 frames, then `roi_crop_batch` to extract and preprocess all detections in a single kernel launch.
+
+```cpp
+#include "cuframe/pipeline.h"
+#include "cuframe/kernels/roi_crop.h"
+#include "cuframe/batch_pool.h"
+
+auto pipeline = cuframe::Pipeline::builder()
+    .input("video.mp4")
+    .resize(640, 640, cuframe::ResizeMode::LETTERBOX)
+    .normalize({0, 0, 0}, {1, 1, 1})       // YOLO: pixel/255
+    .retain_decoded(true)                    // keep NV12 for ROI cropping
+    .batch(1)
+    .build();
+
+cuframe::BatchPool crop_pool(1, 64, 3, 224, 224);  // up to 64 crops
+
+while (auto batch = pipeline.next()) {
+    auto boxes = run_detector((*batch)->data());
+
+    auto& frame = pipeline.retained_frame(0);
+    auto crops = crop_pool.acquire();
+
+    std::vector<cuframe::Rect> rois;
+    for (auto& b : boxes)
+        rois.push_back({b.x, b.y, b.w, b.h});
+
+    // crop + resize + color convert + normalize all ROIs in one kernel
+    cuframe::roi_crop_batch(
+        frame.data, frame.width, frame.height, frame.pitch,
+        rois.data(), rois.size(),
+        crops->data(), 224, 224,
+        pipeline.config().color_matrix,
+        cuframe::make_norm_params({0,0,0}, {1,1,1}),
+        false);
+    crops->set_count(rois.size());
+
+    auto labels = run_classifier(crops->data(), rois.size());
+}
+```
+
+the color matrix is read from `pipeline.config().color_matrix` so the ROI crops use the same BT.601/BT.709 auto-selection as the main pipeline. see [docs/api.md](docs/api.md) for the full `roi_crop_batch` API reference.
+
+**ONNX model export note:** for batched ROI inference, the second-stage model needs a dynamic batch dimension. with Ultralytics YOLO, export with `dynamic=True`:
+
+```bash
+yolo export model=yolo26n-cls.pt format=onnx imgsz=224 dynamic=True
+```
+
+this makes batch, height, and width all symbolic in the ONNX graph. the spatial dimensions can be read from the model's `imgsz` metadata at runtime; the batch dimension accepts any size. without `dynamic=True`, you'll need to run inference per-crop (one `session.Run()` per detection).
+
 ## features
 
 - **NVDEC hardware decode** — H.264, H.265/HEVC, VP9, and AV1 decoded by dedicated GPU hardware, frames land directly in GPU memory
@@ -61,6 +114,8 @@ while (auto batch = pipeline.next()) {
 - **letterbox resize** — aspect-ratio-preserving resize with configurable pad value (default 114.0 for YOLO convention)
 - **multi-GPU device selection** — pin a pipeline to a specific GPU with `.device(gpu_id)`, one pipeline per GPU
 - **refcounted batch pool** — pre-allocated GPU batch buffers returned via `shared_ptr` with custom deleter, supports multiple consumers and backpressure
+- **ROI crop** — batch-extract regions from a decoded frame, resize + color convert + normalize each in a single kernel launch. enables two-stage pipelines (detect → crop → classify) without leaving the GPU
+- **retained decoded frames** — optionally keep raw NV12 frames alongside preprocessed batches for ROI cropping after first-stage inference. one D2D copy per frame (~0.01ms at 1080p)
 - **multi-stream prefetch** — overlaps decode of batch N+1 with preprocessing of batch N using separate CUDA streams
 - **zero framework dependency** — output is a raw device pointer with shape metadata, works with any CUDA-aware inference framework
 
@@ -148,7 +203,8 @@ cuframe/
 │           ├── color_convert.h    # NV12 → RGB planar
 │           ├── resize.h           # bilinear resize + letterbox
 │           ├── normalize.h        # per-channel normalize
-│           └── fused_preprocess.h # single-pass NV12 → tensor
+│           ├── fused_preprocess.h # single-pass NV12 → tensor
+│           └── roi_crop.h         # batched ROI crop from NV12
 ├── src/
 │   └── cuframe/
 │       ├── pipeline.cpp
@@ -163,7 +219,8 @@ cuframe/
 │           ├── color_convert.cu
 │           ├── resize.cu
 │           ├── normalize.cu
-│           └── fused_preprocess.cu
+│           ├── fused_preprocess.cu
+│           └── roi_crop.cu
 ├── tests/
 ├── benchmarks/
 ├── examples/

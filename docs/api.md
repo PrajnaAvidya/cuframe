@@ -302,12 +302,13 @@ struct Rect {
 auto pipeline = cuframe::Pipeline::builder()
     .input("video.mp4")
     .resize(640, 640, cuframe::ResizeMode::LETTERBOX)
-    .normalize({0.485f, 0.456f, 0.406f}, {0.229f, 0.224f, 0.225f})
+    .normalize({0.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 1.0f})
     .retain_decoded(true)
     .batch(1)
     .build();
 
-cuframe::BatchPool crop_pool(2, 64, 3, 224, 224);
+cuframe::BatchPool crop_pool(1, 64, 3, 224, 224);
+const auto& cfg = pipeline.config();
 
 while (auto batch = pipeline.next()) {
     auto boxes = run_detector((*batch)->data(), 640, 640);
@@ -323,12 +324,17 @@ while (auto batch = pipeline.next()) {
         frame.data, frame.width, frame.height, frame.pitch,
         rois.data(), rois.size(),
         crops->data(), 224, 224,
-        cuframe::BT601, cuframe::IMAGENET_NORM, false, stream);
+        cfg.color_matrix, cfg.norm, false);
     crops->set_count(rois.size());
 
     auto labels = run_classifier(crops->data(), rois.size());
 }
 ```
+
+**tips:**
+- use `pipeline.config().color_matrix` so ROI crops use the same auto-selected BT.601/BT.709 as the main pipeline
+- use `pipeline.config().norm` to reuse the same normalization, or pass different `NormParams` if the second-stage model expects different normalization (e.g. ImageNet vs YOLO)
+- the crop output is contiguous NCHW, same layout as `GpuFrameBatch`. if the second-stage model supports dynamic batch, pass `crops->data()` directly with batch size = `rois.size()`. for ONNX models, export with `dynamic=True` (e.g. `yolo export ... dynamic=True`) to enable this. without dynamic batch, loop over `crops->frame(i)` and run inference per-crop
 
 ---
 
