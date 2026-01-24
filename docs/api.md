@@ -45,6 +45,8 @@ auto pipeline = cuframe::Pipeline::builder()
 
 **`channel_order_bgr(bool bgr = true)`** — optional. output BGR channel order instead of RGB. use for models trained with OpenCV defaults (Caffe, PaddlePaddle, some YOLO variants). default is RGB.
 
+**`retain_decoded(bool retain = true)`** — optional. when enabled, keeps a copy of the raw NV12 decoded frames alongside each preprocessed batch. use this for two-stage inference pipelines where you need to crop regions from the original frame after running a detector. access retained frames via `Pipeline::retained_frame(i)`. adds one D2D copy per frame (~0.01ms at 1080p) and `batch_size` NV12 buffers (~3.1MB each at 1080p).
+
 **`device(int gpu_id)`** — optional (default 0). select which GPU to run on. all decode, preprocessing, and output buffers are allocated on this device. for multi-GPU setups, create one pipeline per GPU. invalid device IDs throw `std::runtime_error` at build time.
 
 **`build()`** — creates the pipeline. opens the video file, initializes the decoder, allocates all GPU buffers. throws `std::invalid_argument` if no input path is set, `std::runtime_error` if the file can't be opened or decoded.
@@ -71,6 +73,22 @@ the last batch may be partial: `(*batch)->count()` may be less than `(*batch)->b
 
 **`config()`** — returns the resolved pipeline configuration.
 
+**`retained_frame(int i)`** — returns a `RetainedFrame` descriptor for the `i`-th frame in the most recent batch. only valid when `retain_decoded(true)` was set. valid until the next `next()` call.
+
+**`retained_count()`** — number of retained frames available (matches the most recent batch's `count()`). returns 0 if `retain_decoded` is not enabled.
+
+### RetainedFrame
+
+```cpp
+struct RetainedFrame {
+    const uint8_t* data;    // NV12 data on device
+    int width, height;
+    unsigned int pitch;     // row stride in bytes
+};
+```
+
+lightweight descriptor for a retained NV12 decoded frame. the `data` pointer is valid from the `next()` call that produced it until the next `next()` call.
+
 ### PipelineConfig
 
 ```cpp
@@ -89,6 +107,7 @@ struct PipelineConfig {
     bool auto_color_matrix = true;
     ColorMatrix color_matrix{};
     bool bgr = false;
+    bool retain_decoded = false;
     int device_id = 0;
     int batch_size = 1;
     int pool_size = 2;
@@ -251,6 +270,65 @@ cuframe::fused_nv12_to_tensor(nv12_ptr, rgb_ptr,
 NV12 → normalized float32 RGB planar in one kernel launch. color conversion, bilinear resize, and normalization combined. eliminates 2 intermediate buffers and ~2.5x memory traffic vs separate kernels.
 
 the pipeline uses this automatically when both resize and normalize are configured.
+
+### ROI crop
+
+```cpp
+#include "cuframe/kernels/roi_crop.h"
+
+cuframe::Rect rois[] = {{10, 10, 100, 80}, {200, 50, 60, 120}};
+cuframe::roi_crop_batch(nv12_ptr, src_w, src_h, src_pitch,
+    rois, 2, output_ptr, 224, 224,
+    cuframe::BT601, cuframe::IMAGENET_NORM, false, stream);
+```
+
+batch crop: extract multiple regions from a single NV12 frame, resize each to `dst_w x dst_h`, color convert, and normalize in a single kernel launch. uses a 3D grid with `blockIdx.z` indexing ROIs for minimal launch overhead regardless of crop count.
+
+- `rois` — host-side array of `Rect` structs (uploaded to device internally via stream-ordered alloc)
+- output layout: `output[roi * 3 * dst_h * dst_w + c * dst_h * dst_w + y * dst_w + x]` — contiguous NCHW, same as `GpuFrameBatch`
+- no padding: ROI crops are always stretched to `dst_w x dst_h`
+- source coordinates are clamped to frame bounds (safe for ROIs at edges)
+- `num_rois == 0` is a no-op
+
+```cpp
+struct Rect {
+    int x, y, w, h;  // bounding box in source pixel coordinates
+};
+```
+
+**two-stage pipeline example** (detect + classify):
+
+```cpp
+auto pipeline = cuframe::Pipeline::builder()
+    .input("video.mp4")
+    .resize(640, 640, cuframe::ResizeMode::LETTERBOX)
+    .normalize({0.485f, 0.456f, 0.406f}, {0.229f, 0.224f, 0.225f})
+    .retain_decoded(true)
+    .batch(1)
+    .build();
+
+cuframe::BatchPool crop_pool(2, 64, 3, 224, 224);
+
+while (auto batch = pipeline.next()) {
+    auto boxes = run_detector((*batch)->data(), 640, 640);
+
+    auto& frame = pipeline.retained_frame(0);
+    auto crops = crop_pool.acquire();
+
+    std::vector<cuframe::Rect> rois;
+    for (auto& b : boxes)
+        rois.push_back({b.x, b.y, b.w, b.h});
+
+    cuframe::roi_crop_batch(
+        frame.data, frame.width, frame.height, frame.pitch,
+        rois.data(), rois.size(),
+        crops->data(), 224, 224,
+        cuframe::BT601, cuframe::IMAGENET_NORM, false, stream);
+    crops->set_count(rois.size());
+
+    auto labels = run_classifier(crops->data(), rois.size());
+}
+```
 
 ---
 

@@ -11,6 +11,7 @@ add_library(cuframe STATIC
     cuframe/kernels/resize.cu
     cuframe/kernels/normalize.cu
     cuframe/kernels/fused_preprocess.cu
+    cuframe/kernels/roi_crop.cu
 )
 
 target_include_directories(cuframe PUBLIC

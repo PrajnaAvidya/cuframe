@@ -71,3 +71,7 @@ gtest_discover_tests(test_center_crop WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
 add_executable(test_codec_support test_codec_support.cpp)
 target_link_libraries(test_codec_support PRIVATE cuframe GTest::gtest_main)
 gtest_discover_tests(test_codec_support WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+
+add_executable(test_roi_crop test_roi_crop.cpp)
+target_link_libraries(test_roi_crop PRIVATE cuframe GTest::gtest_main)
+gtest_discover_tests(test_roi_crop WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
