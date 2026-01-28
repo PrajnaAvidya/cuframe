@@ -7,3 +7,9 @@ target_link_libraries(tensorrt_inference PRIVATE cuframe)
 
 add_executable(onnxruntime_inference onnxruntime_inference.cpp)
 target_link_libraries(onnxruntime_inference PRIVATE cuframe)
+
+add_executable(classification_pipeline classification_pipeline.cpp)
+target_link_libraries(classification_pipeline PRIVATE cuframe)
+
+add_executable(two_stage_pipeline two_stage_pipeline.cpp)
+target_link_libraries(two_stage_pipeline PRIVATE cuframe)

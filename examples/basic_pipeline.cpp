@@ -13,12 +13,22 @@ int main(int argc, char** argv) {
     }
 
     // build a pipeline: decode → resize 640x640 (letterbox) → ImageNet normalize → batch 8
+    //
+    // other builder options (not shown here):
+    //   .center_crop(224, 224)        — center crop after resize (fused into single kernel)
+    //   .channel_order_bgr()          — BGR output for OpenCV-convention models
+    //   .retain_decoded(true)         — keep NV12 frames for ROI cropping (two-stage pipelines)
+    //   .device(gpu_id)               — select GPU for multi-GPU setups
     auto pipeline = cuframe::Pipeline::builder()
         .input(argv[1])
         .resize(640, 640, cuframe::ResizeMode::LETTERBOX)
         .normalize({0.485f, 0.456f, 0.406f}, {0.229f, 0.224f, 0.225f})
         .batch(8)
         .build();
+
+    printf("source: %dx%d, %.2f fps, %lld frames\n",
+           pipeline.source_width(), pipeline.source_height(),
+           pipeline.fps(), (long long)pipeline.frame_count());
 
     int total = 0;
     int batch_num = 0;

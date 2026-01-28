@@ -50,6 +50,10 @@ int main(int argc, char** argv) {
         .batch(8)
         .build();
 
+    printf("source: %dx%d, %.2f fps, %lld frames\n",
+           pipeline.source_width(), pipeline.source_height(),
+           pipeline.fps(), (long long)pipeline.frame_count());
+
     cudaStream_t infer_stream;
     cudaStreamCreate(&infer_stream);
 
