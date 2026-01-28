@@ -139,6 +139,11 @@ Pipeline& Pipeline::operator=(Pipeline&&) noexcept = default;
 
 const PipelineConfig& Pipeline::config() const { return impl_->config; }
 
+int Pipeline::source_width() const { return impl_->demuxer->video_info().width; }
+int Pipeline::source_height() const { return impl_->demuxer->video_info().height; }
+double Pipeline::fps() const { return impl_->demuxer->video_info().fps; }
+int64_t Pipeline::frame_count() const { return impl_->demuxer->video_info().num_frames; }
+
 const RetainedFrame& Pipeline::retained_frame(int i) const {
     return impl_->retained_meta[i];
 }

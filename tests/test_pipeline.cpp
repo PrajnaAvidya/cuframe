@@ -713,3 +713,23 @@ TEST(PipelineTest, RetainDecoded_DisabledByDefault) {
     ASSERT_TRUE(batch.has_value());
     EXPECT_EQ(pipeline.retained_count(), 0);
 }
+
+// ============================================================================
+// source video metadata accessors
+// ============================================================================
+
+TEST(PipelineTest, SourceMetadata) {
+    if (!test_video_exists()) GTEST_SKIP() << "test video not found";
+
+    auto pipeline = cuframe::Pipeline::builder()
+        .input(TEST_VIDEO)
+        .resize(DST_W, DST_H)
+        .batch(1)
+        .build();
+
+    // test video: 320x240, 30fps, 90 frames
+    EXPECT_EQ(pipeline.source_width(), 320);
+    EXPECT_EQ(pipeline.source_height(), 240);
+    EXPECT_DOUBLE_EQ(pipeline.fps(), 30.0);
+    EXPECT_EQ(pipeline.frame_count(), 90);
+}

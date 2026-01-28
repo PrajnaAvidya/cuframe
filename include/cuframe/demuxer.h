@@ -15,6 +15,7 @@ namespace cuframe {
 struct VideoInfo {
     int width = 0;
     int height = 0;
+    double fps = 0.0;
     AVCodecID codec_id = AV_CODEC_ID_NONE;
     AVRational time_base = {0, 1};
     int64_t num_frames = -1;            // -1 if unknown

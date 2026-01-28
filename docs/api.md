@@ -59,6 +59,10 @@ public:
     static PipelineBuilder builder();
     std::optional<std::shared_ptr<GpuFrameBatch>> next();
     const PipelineConfig& config() const;
+    int source_width() const;
+    int source_height() const;
+    double fps() const;
+    int64_t frame_count() const;
 };
 ```
 
@@ -72,6 +76,12 @@ the returned `shared_ptr<GpuFrameBatch>` has a custom deleter that returns the b
 the last batch may be partial: `(*batch)->count()` may be less than `(*batch)->batch_size()`.
 
 **`config()`** — returns the resolved pipeline configuration.
+
+**`source_width()`** / **`source_height()`** — source video resolution in pixels (before any resize/crop).
+
+**`fps()`** — average frame rate of the source video. computed from FFmpeg's `avg_frame_rate`.
+
+**`frame_count()`** — total number of frames in the source video, or -1 if the container doesn't store this information.
 
 **`retained_frame(int i)`** — returns a `RetainedFrame` descriptor for the `i`-th frame in the most recent batch. only valid when `retain_decoded(true)` was set. valid until the next `next()` call.
 
@@ -363,6 +373,7 @@ opens a video file via FFmpeg `libavformat`. yields encoded video packets with a
 ```cpp
 struct VideoInfo {
     int width, height;
+    double fps;                        // average frame rate
     AVCodecID codec_id;
     AVRational time_base;
     int64_t num_frames;                // -1 if unknown

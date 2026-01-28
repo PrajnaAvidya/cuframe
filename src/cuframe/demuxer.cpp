@@ -37,6 +37,8 @@ Demuxer::Demuxer(const std::string& filepath) {
     info_.height = codecpar->height;
     info_.codec_id = codecpar->codec_id;
     info_.time_base = stream->time_base;
+    if (stream->avg_frame_rate.den > 0)
+        info_.fps = (double)stream->avg_frame_rate.num / stream->avg_frame_rate.den;
     info_.num_frames = stream->nb_frames > 0 ? stream->nb_frames : -1;
 
     if (codecpar->extradata && codecpar->extradata_size > 0) {

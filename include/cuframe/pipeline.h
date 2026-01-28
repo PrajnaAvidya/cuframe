@@ -95,6 +95,12 @@ public:
 
     const PipelineConfig& config() const;
 
+    // source video metadata (delegates to internal demuxer)
+    int source_width() const;
+    int source_height() const;
+    double fps() const;
+    int64_t frame_count() const;  // -1 if container doesn't store it
+
     // retained NV12 frames from the most recent next() call.
     // only populated when retain_decoded(true) was set on the builder.
     // valid until the next next() call. i is batch index [0, retained_count()).
