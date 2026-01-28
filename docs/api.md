@@ -63,6 +63,7 @@ public:
     int source_height() const;
     double fps() const;
     int64_t frame_count() const;
+    const LetterboxInfo& letterbox_info() const;
 };
 ```
 
@@ -82,6 +83,40 @@ the last batch may be partial: `(*batch)->count()` may be less than `(*batch)->b
 **`fps()`** — average frame rate of the source video. computed from FFmpeg's `avg_frame_rate`.
 
 **`frame_count()`** — total number of frames in the source video, or -1 if the container doesn't store this information.
+
+**`letterbox_info()`** — returns the coordinate transform for mapping output pixel coordinates back to source frame coordinates. useful for reversing letterbox/resize/crop transforms on detection boxes.
+
+### LetterboxInfo
+
+```cpp
+struct LetterboxInfo {
+    float scale_x = 1.0f;   // source pixels per output pixel (horizontal)
+    float scale_y = 1.0f;   // source pixels per output pixel (vertical)
+    float pad_left = 0.0f;  // letterbox padding in output pixels
+    float pad_top = 0.0f;
+    float offset_x = 0.0f;  // crop offset in source pixels
+    float offset_y = 0.0f;
+
+    float to_source_x(float x) const;
+    float to_source_y(float y) const;
+};
+```
+
+general formula: `source = (output - pad) * scale + offset`
+
+- **letterbox**: `pad > 0` on one axis, `offset = 0`. typical detection pipeline — subtract padding, scale to source.
+- **stretch**: `pad = 0`, `offset = 0`, `scale_x != scale_y`. just scale.
+- **center crop**: `pad = 0`, `offset > 0` (crop origin in source pixels).
+- **no resize**: identity — `scale = 1`, `pad = 0`, `offset = 0`.
+
+```cpp
+auto& lb = pipeline.letterbox_info();
+// map detector output box to source video coordinates
+float src_x = lb.to_source_x(det_x);
+float src_y = lb.to_source_y(det_y);
+float src_w = det_w * lb.scale_x;
+float src_h = det_h * lb.scale_y;
+```
 
 **`retained_frame(int i)`** — returns a `RetainedFrame` descriptor for the `i`-th frame in the most recent batch. only valid when `retain_decoded(true)` was set. valid until the next `next()` call.
 
@@ -342,6 +377,7 @@ while (auto batch = pipeline.next()) {
 ```
 
 **tips:**
+- use `pipeline.letterbox_info()` to map detection coordinates from output space back to source pixels before constructing `Rect` values for ROI cropping. the `to_source_x/y` methods handle letterbox padding, resize scaling, and crop offsets.
 - use `pipeline.config().color_matrix` so ROI crops use the same auto-selected BT.601/BT.709 as the main pipeline
 - use `pipeline.config().norm` to reuse the same normalization, or pass different `NormParams` if the second-stage model expects different normalization (e.g. ImageNet vs YOLO)
 - the crop output is contiguous NCHW, same layout as `GpuFrameBatch`. if the second-stage model supports dynamic batch, pass `crops->data()` directly with batch size = `rois.size()`. for ONNX models, export with `dynamic=True` (e.g. `yolo export ... dynamic=True`) to enable this. without dynamic batch, loop over `crops->frame(i)` and run inference per-crop

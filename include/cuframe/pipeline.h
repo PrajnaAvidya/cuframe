@@ -13,6 +13,19 @@ namespace cuframe {
 
 enum class ResizeMode { STRETCH, LETTERBOX };
 
+struct LetterboxInfo {
+    float scale_x = 1.0f;   // source pixels per output pixel (horizontal)
+    float scale_y = 1.0f;   // source pixels per output pixel (vertical)
+    float pad_left = 0.0f;  // letterbox padding in output pixels
+    float pad_top = 0.0f;
+    float offset_x = 0.0f;  // crop offset in source pixels
+    float offset_y = 0.0f;
+
+    // map output coordinates to source frame coordinates
+    float to_source_x(float x) const { return (x - pad_left) * scale_x + offset_x; }
+    float to_source_y(float y) const { return (y - pad_top) * scale_y + offset_y; }
+};
+
 // lightweight descriptor for a retained NV12 frame on device.
 // valid from the Pipeline::next() call that produced it until the next next() call.
 struct RetainedFrame {
@@ -100,6 +113,9 @@ public:
     int source_height() const;
     double fps() const;
     int64_t frame_count() const;  // -1 if container doesn't store it
+
+    // transform info for mapping output coordinates back to source pixels
+    const LetterboxInfo& letterbox_info() const;
 
     // retained NV12 frames from the most recent next() call.
     // only populated when retain_decoded(true) was set on the builder.

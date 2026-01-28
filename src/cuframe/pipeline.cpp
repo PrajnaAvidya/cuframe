@@ -32,6 +32,7 @@ struct Pipeline::Impl {
 
     // preprocess config (resolved at build time)
     ResizeParams resize_params{};
+    LetterboxInfo letterbox;
     bool use_fused = false;
     int out_w = 0, out_h = 0;
 
@@ -143,6 +144,7 @@ int Pipeline::source_width() const { return impl_->demuxer->video_info().width; 
 int Pipeline::source_height() const { return impl_->demuxer->video_info().height; }
 double Pipeline::fps() const { return impl_->demuxer->video_info().fps; }
 int64_t Pipeline::frame_count() const { return impl_->demuxer->video_info().num_frames; }
+const LetterboxInfo& Pipeline::letterbox_info() const { return impl_->letterbox; }
 
 const RetainedFrame& Pipeline::retained_frame(int i) const {
     return impl_->retained_meta[i];
@@ -363,6 +365,17 @@ Pipeline PipelineBuilder::build() {
         out_h = info.height;
     }
 
+    // compute output→source coordinate mapping
+    LetterboxInfo lb;
+    if (config_.has_resize || config_.has_center_crop) {
+        lb.scale_x = resize_params.scale_x;
+        lb.scale_y = resize_params.scale_y;
+        lb.pad_left = static_cast<float>(resize_params.pad_left);
+        lb.pad_top = static_cast<float>(resize_params.pad_top);
+        lb.offset_x = resize_params.src_offset_x;
+        lb.offset_y = resize_params.src_offset_y;
+    }
+
     bool use_fused = (config_.has_resize || config_.has_center_crop)
                      && config_.has_normalize;
 
@@ -397,6 +410,7 @@ Pipeline PipelineBuilder::build() {
     impl->demuxer = std::move(demuxer);
     impl->decoder = std::move(decoder);
     impl->resize_params = resize_params;
+    impl->letterbox = lb;
     impl->use_fused = use_fused;
     impl->out_w = out_w;
     impl->out_h = out_h;

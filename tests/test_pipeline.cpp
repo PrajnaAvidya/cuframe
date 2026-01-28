@@ -733,3 +733,100 @@ TEST(PipelineTest, SourceMetadata) {
     EXPECT_DOUBLE_EQ(pipeline.fps(), 30.0);
     EXPECT_EQ(pipeline.frame_count(), 90);
 }
+
+// ============================================================================
+// letterbox info — letterbox resize
+// ============================================================================
+
+TEST(PipelineTest, LetterboxInfo_Letterbox) {
+    if (!test_video_exists()) GTEST_SKIP() << "test video not found";
+
+    // 320x240 → 640x640 letterbox: scales 2x (width-limited), inner 640x480, pad_top=80
+    auto pipeline = cuframe::Pipeline::builder()
+        .input(TEST_VIDEO)
+        .resize(DST_W, DST_H)
+        .batch(1)
+        .build();
+
+    auto& lb = pipeline.letterbox_info();
+    EXPECT_FLOAT_EQ(lb.scale_x, 0.5f);       // 320/640
+    EXPECT_FLOAT_EQ(lb.scale_y, 0.5f);       // 240/480
+    EXPECT_FLOAT_EQ(lb.pad_left, 0.0f);
+    EXPECT_FLOAT_EQ(lb.pad_top, 80.0f);      // (640-480)/2
+    EXPECT_FLOAT_EQ(lb.offset_x, 0.0f);
+    EXPECT_FLOAT_EQ(lb.offset_y, 0.0f);
+
+    // round-trip: output center → source center
+    EXPECT_FLOAT_EQ(lb.to_source_x(320.0f), 160.0f);
+    EXPECT_FLOAT_EQ(lb.to_source_y(320.0f), 120.0f);
+}
+
+// ============================================================================
+// letterbox info — stretch resize
+// ============================================================================
+
+TEST(PipelineTest, LetterboxInfo_Stretch) {
+    if (!test_video_exists()) GTEST_SKIP() << "test video not found";
+
+    auto pipeline = cuframe::Pipeline::builder()
+        .input(TEST_VIDEO)
+        .resize(DST_W, DST_H, cuframe::ResizeMode::STRETCH)
+        .batch(1)
+        .build();
+
+    auto& lb = pipeline.letterbox_info();
+    EXPECT_FLOAT_EQ(lb.scale_x, 0.5f);       // 320/640
+    EXPECT_FLOAT_EQ(lb.scale_y, 0.375f);     // 240/640
+    EXPECT_FLOAT_EQ(lb.pad_left, 0.0f);
+    EXPECT_FLOAT_EQ(lb.pad_top, 0.0f);
+    EXPECT_FLOAT_EQ(lb.offset_x, 0.0f);
+    EXPECT_FLOAT_EQ(lb.offset_y, 0.0f);
+}
+
+// ============================================================================
+// letterbox info — no resize (identity)
+// ============================================================================
+
+TEST(PipelineTest, LetterboxInfo_NoResize) {
+    if (!test_video_exists()) GTEST_SKIP() << "test video not found";
+
+    auto pipeline = cuframe::Pipeline::builder()
+        .input(TEST_VIDEO)
+        .batch(1)
+        .build();
+
+    auto& lb = pipeline.letterbox_info();
+    EXPECT_FLOAT_EQ(lb.scale_x, 1.0f);
+    EXPECT_FLOAT_EQ(lb.scale_y, 1.0f);
+    EXPECT_FLOAT_EQ(lb.pad_left, 0.0f);
+    EXPECT_FLOAT_EQ(lb.pad_top, 0.0f);
+    EXPECT_FLOAT_EQ(lb.offset_x, 0.0f);
+    EXPECT_FLOAT_EQ(lb.offset_y, 0.0f);
+
+    EXPECT_FLOAT_EQ(lb.to_source_x(100.0f), 100.0f);
+    EXPECT_FLOAT_EQ(lb.to_source_y(50.0f), 50.0f);
+}
+
+// ============================================================================
+// letterbox info — center crop with resize
+// ============================================================================
+
+TEST(PipelineTest, LetterboxInfo_CenterCrop) {
+    if (!test_video_exists()) GTEST_SKIP() << "test video not found";
+
+    // 320x240 → resize 256x256 stretch → center crop 224x224
+    auto pipeline = cuframe::Pipeline::builder()
+        .input(TEST_VIDEO)
+        .resize(256, 256, cuframe::ResizeMode::STRETCH)
+        .center_crop(224, 224)
+        .batch(1)
+        .build();
+
+    auto& lb = pipeline.letterbox_info();
+    EXPECT_FLOAT_EQ(lb.scale_x, 1.25f);      // 320/256
+    EXPECT_FLOAT_EQ(lb.scale_y, 0.9375f);    // 240/256
+    EXPECT_FLOAT_EQ(lb.pad_left, 0.0f);
+    EXPECT_FLOAT_EQ(lb.pad_top, 0.0f);
+    EXPECT_FLOAT_EQ(lb.offset_x, 20.0f);     // (256-224)/2 * 1.25
+    EXPECT_FLOAT_EQ(lb.offset_y, 15.0f);     // (256-224)/2 * 0.9375
+}

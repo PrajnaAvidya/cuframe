@@ -54,10 +54,19 @@ int main(int argc, char** argv) {
         // ---------------------------------------------------------------
         // auto detections = run_detector((*batch)->data(), 640, 640);
         //
-        // each detection has a bounding box in source pixel coordinates.
-        // for YOLO with letterbox, you'd scale boxes back to source coords.
+        // detector outputs boxes in 640x640 output space. use letterbox_info()
+        // to map back to source pixel coordinates for ROI cropping:
+        //
+        //   auto& lb = pipeline.letterbox_info();
+        //   for (auto& det : detections) {
+        //       int sx = (int)lb.to_source_x(det.x);
+        //       int sy = (int)lb.to_source_y(det.y);
+        //       int sw = (int)(det.w * lb.scale_x);
+        //       int sh = (int)(det.h * lb.scale_y);
+        //       rois.push_back({sx, sy, sw, sh});
+        //   }
 
-        // simulate detector output: 2 detections per frame
+        // simulate detector output: 2 detections in source pixel coordinates
         std::vector<cuframe::Rect> rois = {
             {100, 50, 200, 300},
             {400, 200, 150, 150}
