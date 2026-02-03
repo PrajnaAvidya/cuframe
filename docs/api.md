@@ -64,10 +64,11 @@ public:
     double fps() const;
     int64_t frame_count() const;
     const LetterboxInfo& letterbox_info() const;
+    cudaStream_t stream() const;
 };
 ```
 
-**`next()`** — returns the next batch of preprocessed frames, or `std::nullopt` at end of stream.
+**`next()`** — returns the next batch of preprocessed frames, or `std::nullopt` at end of stream. the batch data is fully synchronized when returned — you can use it immediately on any stream, pass it to TensorRT/ONNX Runtime, or memcpy to host without any additional synchronization. you do NOT need to call `cudaDeviceSynchronize()` after `next()`.
 
 the returned `shared_ptr<GpuFrameBatch>` has a custom deleter that returns the batch to an internal pool when all references are dropped. this means:
 - you can copy the `shared_ptr` freely (e.g., pass to an async inference engine while preparing the next batch)
@@ -85,6 +86,8 @@ the last batch may be partial: `(*batch)->count()` may be less than `(*batch)->b
 **`frame_count()`** — total number of frames in the source video, or -1 if the container doesn't store this information.
 
 **`letterbox_info()`** — returns the coordinate transform for mapping output pixel coordinates back to source frame coordinates. useful for reversing letterbox/resize/crop transforms on detection boxes.
+
+**`stream()`** — returns the pipeline's internal CUDA stream. useful for chaining GPU operations (e.g. running `roi_crop_batch` on the same stream) without a full device sync between pipeline output and downstream kernels. the returned stream is valid for the lifetime of the pipeline.
 
 ### LetterboxInfo
 

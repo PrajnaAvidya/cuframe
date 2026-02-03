@@ -830,3 +830,24 @@ TEST(PipelineTest, LetterboxInfo_CenterCrop) {
     EXPECT_FLOAT_EQ(lb.offset_x, 20.0f);     // (256-224)/2 * 1.25
     EXPECT_FLOAT_EQ(lb.offset_y, 15.0f);     // (256-224)/2 * 0.9375
 }
+
+// ============================================================================
+// stream accessor — returns valid CUDA stream
+// ============================================================================
+
+TEST(PipelineTest, StreamAccessor) {
+    if (!test_video_exists()) GTEST_SKIP() << "test video not found";
+
+    auto pipeline = cuframe::Pipeline::builder()
+        .input(TEST_VIDEO)
+        .resize(DST_W, DST_H)
+        .batch(1)
+        .build();
+
+    cudaStream_t s = pipeline.stream();
+    EXPECT_NE(s, nullptr);
+
+    // stream should be queryable (valid handle)
+    cudaError_t err = cudaStreamQuery(s);
+    EXPECT_TRUE(err == cudaSuccess || err == cudaErrorNotReady);
+}

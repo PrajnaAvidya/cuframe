@@ -102,6 +102,7 @@ public:
     static PipelineBuilder builder();
 
     // returns next batch, or nullopt at end of stream.
+    // the batch data is fully synchronized — ready to use on any stream when returned.
     // batch is refcounted — stays alive as long as any shared_ptr references it.
     // when all refs dropped, batch returns to internal pool.
     std::optional<std::shared_ptr<GpuFrameBatch>> next();
@@ -116,6 +117,11 @@ public:
 
     // transform info for mapping output coordinates back to source pixels
     const LetterboxInfo& letterbox_info() const;
+
+    // internal CUDA stream used for preprocessing.
+    // useful for chaining GPU ops (e.g. roi_crop_batch) without a full device sync.
+    // valid for the lifetime of the pipeline.
+    cudaStream_t stream() const;
 
     // retained NV12 frames from the most recent next() call.
     // only populated when retain_decoded(true) was set on the builder.

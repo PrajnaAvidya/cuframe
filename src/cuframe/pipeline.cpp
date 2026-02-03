@@ -145,6 +145,7 @@ int Pipeline::source_height() const { return impl_->demuxer->video_info().height
 double Pipeline::fps() const { return impl_->demuxer->video_info().fps; }
 int64_t Pipeline::frame_count() const { return impl_->demuxer->video_info().num_frames; }
 const LetterboxInfo& Pipeline::letterbox_info() const { return impl_->letterbox; }
+cudaStream_t Pipeline::stream() const { return impl_->preprocess_stream; }
 
 const RetainedFrame& Pipeline::retained_frame(int i) const {
     return impl_->retained_meta[i];
