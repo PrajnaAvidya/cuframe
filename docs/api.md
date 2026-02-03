@@ -65,6 +65,10 @@ public:
     int64_t frame_count() const;
     const LetterboxInfo& letterbox_info() const;
     cudaStream_t stream() const;
+    void crop_rois(int batch_idx, const Rect* rois, int num_rois,
+                   GpuFrameBatch& output, const NormParams& norm, bool bgr = false);
+    void crop_rois(int batch_idx, const std::vector<Rect>& rois,
+                   GpuFrameBatch& output, const NormParams& norm, bool bgr = false);
 };
 ```
 
@@ -88,6 +92,20 @@ the last batch may be partial: `(*batch)->count()` may be less than `(*batch)->b
 **`letterbox_info()`** — returns the coordinate transform for mapping output pixel coordinates back to source frame coordinates. useful for reversing letterbox/resize/crop transforms on detection boxes.
 
 **`stream()`** — returns the pipeline's internal CUDA stream. useful for chaining GPU operations (e.g. running `roi_crop_batch` on the same stream) without a full device sync between pipeline output and downstream kernels. the returned stream is valid for the lifetime of the pipeline.
+
+**`crop_rois(batch_idx, rois, num_rois, output, norm, bgr)`** — crop regions from a retained NV12 frame, resize + normalize into an output batch. convenience wrapper around `roi_crop_batch()` that handles frame lookup, color matrix selection, stream management, and count tracking automatically.
+
+- `batch_idx` — frame index in the most recent `next()` result (0 for batch_size=1)
+- `rois` / `num_rois` — bounding boxes in source pixel coordinates (host array)
+- `output` — pre-allocated `GpuFrameBatch` (from a `BatchPool`). `dst_w = output.width()`, `dst_h = output.height()`
+- `norm` — normalization params (e.g. `IMAGENET_NORM`). can differ from the pipeline's own norm
+- `bgr` — output BGR instead of RGB (default false)
+- requires `retain_decoded(true)` — throws `std::logic_error` otherwise
+- throws `std::out_of_range` if batch_idx is invalid
+- runs on the pipeline's internal stream, synchronized on return
+- `output.set_count(num_rois)` called automatically
+
+also accepts `const std::vector<Rect>&` instead of pointer + count.
 
 ### LetterboxInfo
 
@@ -361,19 +379,12 @@ const auto& cfg = pipeline.config();
 while (auto batch = pipeline.next()) {
     auto boxes = run_detector((*batch)->data(), 640, 640);
 
-    auto& frame = pipeline.retained_frame(0);
-    auto crops = crop_pool.acquire();
-
     std::vector<cuframe::Rect> rois;
     for (auto& b : boxes)
         rois.push_back({b.x, b.y, b.w, b.h});
 
-    cuframe::roi_crop_batch(
-        frame.data, frame.width, frame.height, frame.pitch,
-        rois.data(), rois.size(),
-        crops->data(), 224, 224,
-        cfg.color_matrix, cfg.norm, false);
-    crops->set_count(rois.size());
+    auto crops = crop_pool.acquire();
+    pipeline.crop_rois(0, rois, *crops, cfg.norm);
 
     auto labels = run_classifier(crops->data(), rois.size());
 }
@@ -384,6 +395,7 @@ while (auto batch = pipeline.next()) {
 - use `pipeline.config().color_matrix` so ROI crops use the same auto-selected BT.601/BT.709 as the main pipeline
 - use `pipeline.config().norm` to reuse the same normalization, or pass different `NormParams` if the second-stage model expects different normalization (e.g. ImageNet vs YOLO)
 - the crop output is contiguous NCHW, same layout as `GpuFrameBatch`. if the second-stage model supports dynamic batch, pass `crops->data()` directly with batch size = `rois.size()`. for ONNX models, export with `dynamic=True` (e.g. `yolo export ... dynamic=True`) to enable this. without dynamic batch, loop over `crops->frame(i)` and run inference per-crop
+- for pipelines using `retain_decoded(true)`, prefer `Pipeline::crop_rois()` which handles frame lookup, color matrix, stream, and count automatically. use `roi_crop_batch()` directly when working with non-pipeline NV12 sources or custom streams.
 
 ---
 

@@ -3,7 +3,9 @@
 #include "cuframe/kernels/color_convert.h"
 #include "cuframe/kernels/resize.h"
 #include "cuframe/kernels/normalize.h"
+#include "cuframe/kernels/roi_crop.h"
 #include <string>
+#include <vector>
 #include <array>
 #include <memory>
 #include <optional>
@@ -122,6 +124,22 @@ public:
     // useful for chaining GPU ops (e.g. roi_crop_batch) without a full device sync.
     // valid for the lifetime of the pipeline.
     cudaStream_t stream() const;
+
+    // crop regions from retained NV12 frame, resize + normalize into output batch.
+    // requires retain_decoded(true). batch_idx is the frame index in the most recent
+    // next() result. uses pipeline's color matrix and stream. output.set_count()
+    // called automatically. data is synchronized on return.
+    void crop_rois(int batch_idx,
+                   const Rect* rois, int num_rois,
+                   GpuFrameBatch& output,
+                   const NormParams& norm,
+                   bool bgr = false);
+
+    void crop_rois(int batch_idx,
+                   const std::vector<Rect>& rois,
+                   GpuFrameBatch& output,
+                   const NormParams& norm,
+                   bool bgr = false);
 
     // retained NV12 frames from the most recent next() call.
     // only populated when retain_decoded(true) was set on the builder.

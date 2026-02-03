@@ -7,6 +7,7 @@
 #include "cuframe/kernels/resize.h"
 #include "cuframe/kernels/normalize.h"
 #include "cuframe/kernels/fused_preprocess.h"
+#include "cuframe/kernels/roi_crop.h"
 #include "cuframe/gpu_frame_batch.h"
 #include "cuframe/cuda_utils.h"
 
@@ -146,6 +147,37 @@ double Pipeline::fps() const { return impl_->demuxer->video_info().fps; }
 int64_t Pipeline::frame_count() const { return impl_->demuxer->video_info().num_frames; }
 const LetterboxInfo& Pipeline::letterbox_info() const { return impl_->letterbox; }
 cudaStream_t Pipeline::stream() const { return impl_->preprocess_stream; }
+
+void Pipeline::crop_rois(int batch_idx,
+                          const Rect* rois, int num_rois,
+                          GpuFrameBatch& output,
+                          const NormParams& norm,
+                          bool bgr) {
+    auto& s = *impl_;
+    if (!s.config.retain_decoded)
+        throw std::logic_error("crop_rois requires retain_decoded(true)");
+    if (batch_idx < 0 || batch_idx >= s.retained_count_)
+        throw std::out_of_range("crop_rois: batch_idx out of range");
+
+    auto& frame = s.retained_meta[batch_idx];
+    roi_crop_batch(
+        frame.data, frame.width, frame.height, frame.pitch,
+        rois, num_rois,
+        output.data(), output.width(), output.height(),
+        s.config.color_matrix, norm, bgr,
+        s.preprocess_stream);
+
+    CUFRAME_CUDA_CHECK(cudaStreamSynchronize(s.preprocess_stream));
+    output.set_count(num_rois);
+}
+
+void Pipeline::crop_rois(int batch_idx,
+                          const std::vector<Rect>& rois,
+                          GpuFrameBatch& output,
+                          const NormParams& norm,
+                          bool bgr) {
+    crop_rois(batch_idx, rois.data(), static_cast<int>(rois.size()), output, norm, bgr);
+}
 
 const RetainedFrame& Pipeline::retained_frame(int i) const {
     return impl_->retained_meta[i];

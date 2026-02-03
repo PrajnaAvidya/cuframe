@@ -5,8 +5,9 @@
 //          → normalize → run classifier
 //
 // the key APIs: retain_decoded(true) keeps the raw NV12 frame alongside
-// preprocessed output. roi_crop_batch() crops all detections in a single
-// kernel launch — no per-ROI overhead.
+// preprocessed output. Pipeline::crop_rois() crops all detections in a single
+// kernel launch — handles frame lookup, color matrix, stream, and count
+// automatically.
 //
 // detector and classifier calls are pseudocode. replace with real inference
 // (TensorRT, ONNX Runtime, etc.) when integrating.
@@ -16,7 +17,6 @@
 
 #include "cuframe/pipeline.h"
 #include "cuframe/batch_pool.h"
-#include "cuframe/kernels/roi_crop.h"
 #include <cstdio>
 #include <vector>
 
@@ -43,7 +43,8 @@ int main(int argc, char** argv) {
     // crop pool for stage 2: 2 pool slots, up to 64 crops, 224x224 classifier input
     cuframe::BatchPool crop_pool(2, 64, 3, 224, 224);
 
-    // reuse auto-selected color matrix + norm params for consistency
+    // reuse pipeline's norm params for the crop stage (same normalization).
+    // use different NormParams if the classifier expects a different scheme.
     const auto& cfg = pipeline.config();
 
     int frame_num = 0;
@@ -81,19 +82,11 @@ int main(int argc, char** argv) {
         // stage 2: crop all detections → classify
         // ---------------------------------------------------------------
 
-        // get the retained NV12 frame (batch index 0 since batch_size=1)
-        auto& frame = pipeline.retained_frame(0);
-
-        // acquire a batch buffer from the pool
         auto crops = crop_pool.acquire();
 
-        // single kernel launch: crop + resize + color convert + normalize all ROIs
-        cuframe::roi_crop_batch(
-            frame.data, frame.width, frame.height, frame.pitch,
-            rois.data(), static_cast<int>(rois.size()),
-            crops->data(), 224, 224,
-            cfg.color_matrix, cfg.norm, cfg.bgr);
-        crops->set_count(static_cast<int>(rois.size()));
+        // single kernel launch: crop + resize + color convert + normalize all ROIs.
+        // handles retained frame lookup, color matrix, stream, and set_count().
+        pipeline.crop_rois(0, rois, *crops, cfg.norm);
 
         // crops->data() is contiguous NCHW: rois.size() x 3 x 224 x 224
         // pass directly to classifier — no copies needed.

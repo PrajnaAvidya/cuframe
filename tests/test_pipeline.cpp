@@ -1,10 +1,12 @@
 #include "cuframe/pipeline.h"
+#include "cuframe/batch_pool.h"
 #include "cuframe/demuxer.h"
 #include "cuframe/decoder.h"
 #include "cuframe/kernels/fused_preprocess.h"
 #include "cuframe/kernels/color_convert.h"
 #include "cuframe/kernels/resize.h"
 #include "cuframe/kernels/normalize.h"
+#include "cuframe/kernels/roi_crop.h"
 #include "cuframe/gpu_frame_batch.h"
 #include "cuframe/cuda_utils.h"
 
@@ -850,4 +852,178 @@ TEST(PipelineTest, StreamAccessor) {
     // stream should be queryable (valid handle)
     cudaError_t err = cudaStreamQuery(s);
     EXPECT_TRUE(err == cudaSuccess || err == cudaErrorNotReady);
+}
+
+// ============================================================================
+// crop_rois — basic usage
+// ============================================================================
+
+TEST(PipelineTest, CropRois_Basic) {
+    if (!test_video_exists()) GTEST_SKIP() << "test video not found";
+
+    auto pipeline = cuframe::Pipeline::builder()
+        .input(TEST_VIDEO)
+        .resize(DST_W, DST_H, cuframe::ResizeMode::LETTERBOX)
+        .normalize({0.485f, 0.456f, 0.406f}, {0.229f, 0.224f, 0.225f})
+        .retain_decoded(true)
+        .batch(1)
+        .build();
+
+    auto batch = pipeline.next();
+    ASSERT_TRUE(batch.has_value());
+
+    int crop_w = 64, crop_h = 64;
+    cuframe::BatchPool crop_pool(1, 8, 3, crop_h, crop_w);
+    auto crops = crop_pool.acquire();
+
+    std::vector<cuframe::Rect> rois = {
+        {10, 10, 100, 80},
+        {0, 0, 160, 120},
+    };
+
+    pipeline.crop_rois(0, rois, *crops, cuframe::IMAGENET_NORM);
+
+    EXPECT_EQ(crops->count(), 2);
+    EXPECT_EQ(crops->height(), crop_h);
+    EXPECT_EQ(crops->width(), crop_w);
+
+    // verify valid pixel values
+    size_t total = 2ULL * 3 * crop_h * crop_w;
+    std::vector<float> host(total);
+    CUFRAME_CUDA_CHECK(cudaMemcpy(host.data(), crops->data(),
+                                   total * sizeof(float), cudaMemcpyDeviceToHost));
+    for (size_t i = 0; i < total; i += 37) {
+        EXPECT_FALSE(std::isnan(host[i])) << "NaN at " << i;
+        EXPECT_GT(host[i], -5.0f);
+        EXPECT_LT(host[i], 5.0f);
+    }
+}
+
+// ============================================================================
+// crop_rois — output matches raw roi_crop_batch()
+// ============================================================================
+
+TEST(PipelineTest, CropRois_MatchesRawKernel) {
+    if (!test_video_exists()) GTEST_SKIP() << "test video not found";
+
+    auto pipeline = cuframe::Pipeline::builder()
+        .input(TEST_VIDEO)
+        .resize(DST_W, DST_H)
+        .normalize({0.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 1.0f})
+        .retain_decoded(true)
+        .batch(1)
+        .build();
+
+    auto batch = pipeline.next();
+    ASSERT_TRUE(batch.has_value());
+
+    int crop_w = 64, crop_h = 64;
+    std::vector<cuframe::Rect> rois = {{10, 10, 100, 80}, {50, 30, 80, 60}};
+
+    // convenience path
+    cuframe::BatchPool pool1(1, 8, 3, crop_h, crop_w);
+    auto crops1 = pool1.acquire();
+    pipeline.crop_rois(0, rois, *crops1, cuframe::IMAGENET_NORM);
+
+    // raw kernel path
+    auto& frame = pipeline.retained_frame(0);
+    auto& cfg = pipeline.config();
+    cuframe::BatchPool pool2(1, 8, 3, crop_h, crop_w);
+    auto crops2 = pool2.acquire();
+    cuframe::roi_crop_batch(
+        frame.data, frame.width, frame.height, frame.pitch,
+        rois.data(), static_cast<int>(rois.size()),
+        crops2->data(), crop_w, crop_h,
+        cfg.color_matrix, cuframe::IMAGENET_NORM, false);
+    CUFRAME_CUDA_CHECK(cudaDeviceSynchronize());
+    crops2->set_count(static_cast<int>(rois.size()));
+
+    // compare
+    size_t total = 2ULL * 3 * crop_h * crop_w;
+    std::vector<float> h1(total), h2(total);
+    CUFRAME_CUDA_CHECK(cudaMemcpy(h1.data(), crops1->data(),
+                                   total * sizeof(float), cudaMemcpyDeviceToHost));
+    CUFRAME_CUDA_CHECK(cudaMemcpy(h2.data(), crops2->data(),
+                                   total * sizeof(float), cudaMemcpyDeviceToHost));
+    for (size_t i = 0; i < total; ++i)
+        EXPECT_FLOAT_EQ(h1[i], h2[i]) << "mismatch at " << i;
+}
+
+// ============================================================================
+// crop_rois — throws without retain_decoded
+// ============================================================================
+
+TEST(PipelineTest, CropRois_ThrowsWithoutRetain) {
+    if (!test_video_exists()) GTEST_SKIP() << "test video not found";
+
+    auto pipeline = cuframe::Pipeline::builder()
+        .input(TEST_VIDEO)
+        .resize(DST_W, DST_H)
+        .batch(1)
+        .build();
+
+    auto batch = pipeline.next();
+    ASSERT_TRUE(batch.has_value());
+
+    cuframe::BatchPool pool(1, 4, 3, 64, 64);
+    auto crops = pool.acquire();
+    cuframe::Rect roi{0, 0, 100, 100};
+
+    EXPECT_THROW(
+        pipeline.crop_rois(0, &roi, 1, *crops, cuframe::IMAGENET_NORM),
+        std::logic_error
+    );
+}
+
+// ============================================================================
+// crop_rois — throws on out-of-range batch_idx
+// ============================================================================
+
+TEST(PipelineTest, CropRois_ThrowsOutOfRange) {
+    if (!test_video_exists()) GTEST_SKIP() << "test video not found";
+
+    auto pipeline = cuframe::Pipeline::builder()
+        .input(TEST_VIDEO)
+        .retain_decoded(true)
+        .batch(1)
+        .build();
+
+    auto batch = pipeline.next();
+    ASSERT_TRUE(batch.has_value());
+
+    cuframe::BatchPool pool(1, 4, 3, 64, 64);
+    auto crops = pool.acquire();
+    cuframe::Rect roi{0, 0, 100, 100};
+
+    EXPECT_THROW(
+        pipeline.crop_rois(1, &roi, 1, *crops, cuframe::IMAGENET_NORM),
+        std::out_of_range
+    );
+    EXPECT_THROW(
+        pipeline.crop_rois(-1, &roi, 1, *crops, cuframe::IMAGENET_NORM),
+        std::out_of_range
+    );
+}
+
+// ============================================================================
+// crop_rois — zero ROIs is a no-op
+// ============================================================================
+
+TEST(PipelineTest, CropRois_ZeroRois) {
+    if (!test_video_exists()) GTEST_SKIP() << "test video not found";
+
+    auto pipeline = cuframe::Pipeline::builder()
+        .input(TEST_VIDEO)
+        .retain_decoded(true)
+        .batch(1)
+        .build();
+
+    auto batch = pipeline.next();
+    ASSERT_TRUE(batch.has_value());
+
+    cuframe::BatchPool pool(1, 4, 3, 64, 64);
+    auto crops = pool.acquire();
+
+    pipeline.crop_rois(0, nullptr, 0, *crops, cuframe::IMAGENET_NORM);
+    EXPECT_EQ(crops->count(), 0);
 }
