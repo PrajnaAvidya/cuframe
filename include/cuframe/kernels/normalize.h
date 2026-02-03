@@ -16,6 +16,9 @@ NormParams make_norm_params(const float mean[3], const float std[3]);
 // ImageNet defaults: mean={0.485, 0.456, 0.406}, std={0.229, 0.224, 0.225}
 extern const NormParams IMAGENET_NORM;
 
+// YOLO / pixel-scale: mean={0,0,0}, std={1,1,1} — output = pixel / 255.0
+extern const NormParams YOLO_NORM;
+
 // apply per-channel normalize to float32 RGB planar (3 × H × W).
 // in-place if src_ptr == dst_ptr.
 void normalize(

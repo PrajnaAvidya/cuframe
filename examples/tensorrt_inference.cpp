@@ -11,7 +11,7 @@
 // build: cmake --preset default && cmake --build build
 // run:   ./build/examples/tensorrt_inference <video_file>
 
-#include "cuframe/pipeline.h"
+#include <cuframe/cuframe.h>
 #include <cstdio>
 #include <cuda_runtime.h>
 

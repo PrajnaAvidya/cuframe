@@ -7,7 +7,7 @@ the pipeline is the primary interface. it wraps decode, preprocessing, and batch
 ### PipelineBuilder
 
 ```cpp
-#include "cuframe/pipeline.h"
+#include <cuframe/cuframe.h>  // everything, or include individual headers below
 
 auto pipeline = cuframe::Pipeline::builder()
     .input("video.mp4")                                              // required
@@ -312,6 +312,7 @@ per-channel scale+bias normalization. transforms [0, 255] → normalized range u
 - supports in-place: `src_ptr == dst_ptr`
 - `make_norm_params(mean, std)` pre-computes `scale[c] = 1/(255*std[c])`, `bias[c] = -mean[c]/std[c]`
 - `IMAGENET_NORM` — pre-computed for ImageNet mean={0.485, 0.456, 0.406}, std={0.229, 0.224, 0.225}
+- `YOLO_NORM` — pre-computed for YOLO-style: mean={0, 0, 0}, std={1, 1, 1} (just divides by 255)
 
 ```cpp
 struct NormParams {
@@ -320,6 +321,7 @@ struct NormParams {
 };
 
 extern const NormParams IMAGENET_NORM;
+extern const NormParams YOLO_NORM;   // mean={0,0,0}, std={1,1,1} — pixel / 255.0
 NormParams make_norm_params(const float mean[3], const float std[3]);
 ```
 

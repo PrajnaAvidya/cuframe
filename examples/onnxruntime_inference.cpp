@@ -12,7 +12,7 @@
 // build: cmake --preset default && cmake --build build
 // run:   ./build/examples/onnxruntime_inference <video_file>
 
-#include "cuframe/pipeline.h"
+#include <cuframe/cuframe.h>
 #include <cstdio>
 #include <vector>
 

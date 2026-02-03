@@ -15,8 +15,7 @@
 // build: cmake --preset default && cmake --build build
 // run:   ./build/examples/two_stage_pipeline <video_file>
 
-#include "cuframe/pipeline.h"
-#include "cuframe/batch_pool.h"
+#include <cuframe/cuframe.h>
 #include <cstdio>
 #include <vector>
 

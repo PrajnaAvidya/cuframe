@@ -20,6 +20,14 @@ static NormParams make_imagenet_norm() {
 
 const NormParams IMAGENET_NORM = make_imagenet_norm();
 
+static NormParams make_yolo_norm() {
+    const float mean[] = {0.0f, 0.0f, 0.0f};
+    const float std[] = {1.0f, 1.0f, 1.0f};
+    return make_norm_params(mean, std);
+}
+
+const NormParams YOLO_NORM = make_yolo_norm();
+
 __global__ void normalize_kernel(
     const float* src, float* dst,
     int width, int height,

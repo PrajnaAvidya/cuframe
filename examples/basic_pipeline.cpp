@@ -3,7 +3,7 @@
 // build: cmake --preset default && cmake --build build
 // run:   ./build/examples/basic_pipeline <video_file>
 
-#include "cuframe/pipeline.h"
+#include <cuframe/cuframe.h>
 #include <cstdio>
 
 int main(int argc, char** argv) {
