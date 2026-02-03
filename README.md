@@ -117,6 +117,7 @@ this makes batch, height, and width all symbolic in the ONNX graph. the spatial 
 - **ROI crop** — batch-extract regions from a decoded frame, resize + color convert + normalize each in a single kernel launch. enables two-stage pipelines (detect → crop → classify) without leaving the GPU
 - **retained decoded frames** — optionally keep raw NV12 frames alongside preprocessed batches for ROI cropping after first-stage inference. one D2D copy per frame (~0.01ms at 1080p)
 - **multi-stream prefetch** — overlaps decode of batch N+1 with preprocessing of batch N using separate CUDA streams
+- **NVTX profiling markers** — annotated ranges for decode, preprocess, batch, prefetch, and next. profile with Nsight Systems out of the box. opt-in: no-op if NVTX headers aren't installed
 - **zero framework dependency** — output is a raw device pointer with shape metadata, works with any CUDA-aware inference framework
 
 ## benchmark

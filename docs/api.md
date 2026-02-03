@@ -510,3 +510,39 @@ all CUDA API calls are checked via `CUFRAME_CUDA_CHECK` (runtime API) and `CUFRA
 CUFRAME_CUDA_CHECK(cudaMalloc(&ptr, size));
 CUFRAME_CU_CHECK(cuCtxGetCurrent(&ctx));
 ```
+
+---
+
+## NVTX profiling
+
+```cpp
+#include "cuframe/nvtx.h"
+```
+
+cuframe emits NVTX range markers around pipeline stages, visible in NVIDIA Nsight Systems. annotated ranges:
+
+| range | location | description |
+|-------|----------|-------------|
+| `cuframe::next` | `Pipeline::next()` | full pipeline iteration (decode + preprocess + batch) |
+| `cuframe::decode` | `Decoder::decode()` | NVDEC hardware decode |
+| `cuframe::preprocess` | pipeline internals | fused/separate kernel dispatch |
+| `cuframe::batch` | `batch_frames()` | D2D copy into contiguous NCHW tensor |
+| `cuframe::prefetch` | pipeline internals | async decode of next batch |
+
+**opt-in via header detection.** if `<nvtx3/nvToolsExt.h>` is found at compile time, markers are active. otherwise they compile to no-ops — zero overhead when NVTX isn't installed.
+
+```bash
+# profile a cuframe application with nsight systems
+nsys profile ./my_app
+nsys-ui report.nsys-rep
+```
+
+the macros are available for user code as well:
+
+```cpp
+#include "cuframe/nvtx.h"
+
+CUFRAME_NVTX_PUSH("my_inference");
+// ... run inference ...
+CUFRAME_NVTX_POP();
+```
