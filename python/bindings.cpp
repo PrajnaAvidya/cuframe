@@ -161,6 +161,13 @@ NB_MODULE(_cuframe, m) {
         .def_prop_ro("width", [](PyBatch& s) { return s.ptr->width(); })
         .def("__dlpack__", &batch_dlpack, "stream"_a = 0)
         .def("__dlpack_device__", &batch_dlpack_device)
+        .def_prop_ro("data_ptr", [](PyBatch& s) {
+            return reinterpret_cast<int64_t>(s.ptr->data());
+        })
+        .def_prop_ro("shape", [](PyBatch& s) {
+            return nb::make_tuple(s.ptr->count(), s.ptr->channels(),
+                                  s.ptr->height(), s.ptr->width());
+        })
         .def("__repr__", [](PyBatch& s) {
             auto& b = *s.ptr;
             return "GpuFrameBatch(count=" + std::to_string(b.count()) +
@@ -245,9 +252,21 @@ NB_MODULE(_cuframe, m) {
             return self.letterbox_info();
         })
         .def("crop_rois", [](nb::object self_obj, int batch_idx,
-                              std::vector<cuframe::Rect> rois, PyBatch& output,
+                              nb::list rois_list, PyBatch& output,
                               const cuframe::NormParams& norm, bool bgr) {
             auto& self = nb::cast<cuframe::Pipeline&>(self_obj);
+            std::vector<cuframe::Rect> rois;
+            rois.reserve(nb::len(rois_list));
+            for (auto item : rois_list) {
+                if (nb::isinstance<cuframe::Rect>(item)) {
+                    rois.push_back(nb::cast<cuframe::Rect>(item));
+                } else {
+                    // accept tuple/list (x, y, w, h)
+                    auto seq = nb::cast<nb::tuple>(item);
+                    rois.push_back({nb::cast<int>(seq[0]), nb::cast<int>(seq[1]),
+                                    nb::cast<int>(seq[2]), nb::cast<int>(seq[3])});
+                }
+            }
             self.crop_rois(batch_idx, rois, *output.ptr, norm, bgr);
         }, "batch_idx"_a, "rois"_a, "output"_a, "norm"_a, "bgr"_a = false);
 

@@ -120,3 +120,36 @@ def test_dlpack_lifetime():
     del batch  # drop python ref to PyBatch
     # tensor should still be valid — DLPack capsule holds shared_ptr
     assert tensor[0, 0, 0, 0].item() == val
+
+
+def test_batch_data_ptr():
+    pipeline = cuframe.Pipeline.builder() \
+        .input(VIDEO) \
+        .resize(320, 320) \
+        .batch(4) \
+        .build()
+
+    batch = next(iter(pipeline))
+    assert batch.data_ptr > 0  # nonzero device pointer
+
+
+def test_batch_shape():
+    pipeline = cuframe.Pipeline.builder() \
+        .input(VIDEO) \
+        .resize(320, 320) \
+        .batch(4) \
+        .build()
+
+    batch = next(iter(pipeline))
+    assert batch.shape == (batch.count, 3, 320, 320)
+
+
+def test_no_len():
+    """Pipeline deliberately does not implement __len__"""
+    pipeline = cuframe.Pipeline.builder() \
+        .input(VIDEO) \
+        .batch(1) \
+        .build()
+
+    with pytest.raises(TypeError):
+        len(pipeline)

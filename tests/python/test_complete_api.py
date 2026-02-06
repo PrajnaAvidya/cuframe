@@ -127,6 +127,55 @@ def test_crop_rois_error():
         pipeline.crop_rois(0, [cuframe.Rect(0, 0, 10, 10)], crops, cuframe.YOLO_NORM)
 
 
+def test_crop_rois_tuples():
+    """crop_rois accepts plain tuples instead of Rect objects"""
+    torch = pytest.importorskip("torch")
+
+    pipeline = cuframe.Pipeline.builder() \
+        .input(VIDEO) \
+        .resize(640, 640) \
+        .normalize([0.0, 0.0, 0.0], [1.0, 1.0, 1.0]) \
+        .retain_decoded(True) \
+        .batch(1) \
+        .build()
+
+    batch = next(iter(pipeline))
+
+    pool = cuframe.BatchPool(1, 4, 3, 224, 224)
+    crops = pool.acquire()
+
+    # tuples instead of Rect objects
+    rois = [(10, 10, 100, 80), (50, 30, 60, 60)]
+    pipeline.crop_rois(0, rois, crops, cuframe.YOLO_NORM)
+
+    assert crops.count == 2
+    tensor = torch.from_dlpack(crops)
+    assert tensor.shape == (2, 3, 224, 224)
+
+
+def test_crop_rois_mixed():
+    """crop_rois accepts mix of Rect and tuples"""
+    torch = pytest.importorskip("torch")
+
+    pipeline = cuframe.Pipeline.builder() \
+        .input(VIDEO) \
+        .resize(640, 640) \
+        .normalize([0.0, 0.0, 0.0], [1.0, 1.0, 1.0]) \
+        .retain_decoded(True) \
+        .batch(1) \
+        .build()
+
+    batch = next(iter(pipeline))
+
+    pool = cuframe.BatchPool(1, 4, 3, 224, 224)
+    crops = pool.acquire()
+
+    rois = [cuframe.Rect(10, 10, 100, 80), (50, 30, 60, 60)]
+    pipeline.crop_rois(0, rois, crops, cuframe.YOLO_NORM)
+
+    assert crops.count == 2
+
+
 def test_center_crop():
     pipeline = cuframe.Pipeline.builder() \
         .input(VIDEO) \

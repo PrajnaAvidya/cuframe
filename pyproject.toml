@@ -1,0 +1,20 @@
+[build-system]
+requires = ["scikit-build-core>=0.10", "nanobind>=2.4"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "cuframe"
+version = "0.1.0"
+requires-python = ">=3.9"
+description = "GPU video preprocessing — zero-copy decode to inference-ready tensors"
+readme = "README.md"
+license = {text = "MIT"}
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[tool.scikit-build]
+wheel.packages = ["python/cuframe"]
+
+[tool.scikit-build.cmake.define]
+CMAKE_CUDA_FLAGS = "-Xcompiler -U_GNU_SOURCE"
