@@ -4,7 +4,9 @@
 #include <nanobind/stl/array.h>
 #include <nanobind/stl/optional.h>
 #include <nanobind/stl/shared_ptr.h>
+#include <nanobind/stl/vector.h>
 #include <cuframe/pipeline.h>
+#include <cuframe/batch_pool.h>
 
 namespace nb = nanobind;
 using namespace nb::literals;
@@ -100,6 +102,56 @@ NB_MODULE(_cuframe, m) {
         .value("STRETCH", cuframe::ResizeMode::STRETCH)
         .value("LETTERBOX", cuframe::ResizeMode::LETTERBOX);
 
+    // --- NormParams ---
+    nb::class_<cuframe::NormParams>(m, "NormParams")
+        .def_prop_ro("scale", [](cuframe::NormParams& self) {
+            return nb::make_tuple(self.scale[0], self.scale[1], self.scale[2]);
+        })
+        .def_prop_ro("bias", [](cuframe::NormParams& self) {
+            return nb::make_tuple(self.bias[0], self.bias[1], self.bias[2]);
+        })
+        .def("__repr__", [](cuframe::NormParams& self) {
+            return "NormParams(scale=(" +
+                   std::to_string(self.scale[0]) + ", " +
+                   std::to_string(self.scale[1]) + ", " +
+                   std::to_string(self.scale[2]) + "), bias=(" +
+                   std::to_string(self.bias[0]) + ", " +
+                   std::to_string(self.bias[1]) + ", " +
+                   std::to_string(self.bias[2]) + "))";
+        });
+
+    // --- Rect ---
+    nb::class_<cuframe::Rect>(m, "Rect")
+        .def(nb::init<int, int, int, int>(), "x"_a, "y"_a, "w"_a, "h"_a)
+        .def_rw("x", &cuframe::Rect::x)
+        .def_rw("y", &cuframe::Rect::y)
+        .def_rw("w", &cuframe::Rect::w)
+        .def_rw("h", &cuframe::Rect::h)
+        .def("__repr__", [](cuframe::Rect& r) {
+            return "Rect(x=" + std::to_string(r.x) +
+                   ", y=" + std::to_string(r.y) +
+                   ", w=" + std::to_string(r.w) +
+                   ", h=" + std::to_string(r.h) + ")";
+        });
+
+    // --- LetterboxInfo ---
+    nb::class_<cuframe::LetterboxInfo>(m, "LetterboxInfo")
+        .def_prop_ro("scale_x", [](cuframe::LetterboxInfo& s) { return s.scale_x; })
+        .def_prop_ro("scale_y", [](cuframe::LetterboxInfo& s) { return s.scale_y; })
+        .def_prop_ro("pad_left", [](cuframe::LetterboxInfo& s) { return s.pad_left; })
+        .def_prop_ro("pad_top", [](cuframe::LetterboxInfo& s) { return s.pad_top; })
+        .def_prop_ro("offset_x", [](cuframe::LetterboxInfo& s) { return s.offset_x; })
+        .def_prop_ro("offset_y", [](cuframe::LetterboxInfo& s) { return s.offset_y; })
+        .def("to_source_x", &cuframe::LetterboxInfo::to_source_x, "x"_a)
+        .def("to_source_y", &cuframe::LetterboxInfo::to_source_y, "y"_a)
+        .def("__repr__", [](cuframe::LetterboxInfo& s) {
+            return "LetterboxInfo(scale=(" +
+                   std::to_string(s.scale_x) + ", " +
+                   std::to_string(s.scale_y) + "), pad=(" +
+                   std::to_string(s.pad_left) + ", " +
+                   std::to_string(s.pad_top) + "))";
+        });
+
     // --- GpuFrameBatch (via PyBatch wrapper) ---
     nb::class_<PyBatch>(m, "GpuFrameBatch")
         .def_prop_ro("batch_size", [](PyBatch& s) { return s.ptr->batch_size(); })
@@ -116,6 +168,23 @@ NB_MODULE(_cuframe, m) {
                    ", height=" + std::to_string(b.height()) +
                    ", width=" + std::to_string(b.width()) + ")";
         });
+
+    // --- BatchPool ---
+    nb::class_<cuframe::BatchPool>(m, "BatchPool")
+        .def(nb::init<int, int, int, int, int>(),
+             "pool_size"_a, "max_batch"_a, "channels"_a, "height"_a, "width"_a)
+        .def("acquire", [](nb::object self_obj) -> PyBatch {
+            auto& self = nb::cast<cuframe::BatchPool&>(self_obj);
+            return PyBatch{self_obj, self.acquire(), 0};
+        })
+        .def("try_acquire", [](nb::object self_obj) -> nb::object {
+            auto& self = nb::cast<cuframe::BatchPool&>(self_obj);
+            auto p = self.try_acquire();
+            if (!p) return nb::none();
+            return nb::cast(PyBatch{self_obj, p, 0});
+        })
+        .def_prop_ro("capacity", &cuframe::BatchPool::capacity)
+        .def_prop_ro("available", &cuframe::BatchPool::available);
 
     // --- PipelineBuilder ---
     nb::class_<cuframe::PipelineBuilder>(m, "PipelineBuilder")
@@ -171,5 +240,22 @@ NB_MODULE(_cuframe, m) {
         .def_prop_ro("source_width", &cuframe::Pipeline::source_width)
         .def_prop_ro("source_height", &cuframe::Pipeline::source_height)
         .def_prop_ro("fps", &cuframe::Pipeline::fps)
-        .def_prop_ro("frame_count", &cuframe::Pipeline::frame_count);
+        .def_prop_ro("frame_count", &cuframe::Pipeline::frame_count)
+        .def_prop_ro("letterbox_info", [](cuframe::Pipeline& self) {
+            return self.letterbox_info();
+        })
+        .def("crop_rois", [](nb::object self_obj, int batch_idx,
+                              std::vector<cuframe::Rect> rois, PyBatch& output,
+                              const cuframe::NormParams& norm, bool bgr) {
+            auto& self = nb::cast<cuframe::Pipeline&>(self_obj);
+            self.crop_rois(batch_idx, rois, *output.ptr, norm, bgr);
+        }, "batch_idx"_a, "rois"_a, "output"_a, "norm"_a, "bgr"_a = false);
+
+    // --- norm helpers + constants ---
+    m.def("make_norm_params", [](std::array<float, 3> mean, std::array<float, 3> std_dev) {
+        return cuframe::make_norm_params(mean.data(), std_dev.data());
+    }, "mean"_a, "std"_a);
+
+    m.attr("IMAGENET_NORM") = cuframe::IMAGENET_NORM;
+    m.attr("YOLO_NORM") = cuframe::YOLO_NORM;
 }
