@@ -35,6 +35,32 @@ most GPU video preprocessing pipelines require stitching together separate libra
 
 ## quickstart
 
+### python
+
+```bash
+pip install .  # from source
+```
+
+```python
+import cuframe
+import torch
+
+pipeline = (cuframe.Pipeline.builder()
+    .input("video.mp4")
+    .resize(640, 640, cuframe.ResizeMode.LETTERBOX)
+    .normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+    .batch(8)
+    .build())
+
+for batch in pipeline:
+    tensor = torch.from_dlpack(batch)  # zero-copy CUDA tensor
+    # tensor: (N, 3, 640, 640), float32, cuda:0
+```
+
+`GpuFrameBatch` implements the DLPack protocol — also works directly with ONNX Runtime `io_binding`, CuPy, and JAX. see [examples/python/](examples/python/) for PyTorch, ORT, and two-stage pipeline examples.
+
+### C++
+
 ```cpp
 #include "cuframe/pipeline.h"
 
@@ -190,22 +216,28 @@ ffmpeg -f lavfi -i testsrc=duration=3:size=320x240:rate=30 \
 cuframe/
 ├── CMakeLists.txt
 ├── CMakePresets.json
+├── pyproject.toml                   # pip install . (scikit-build-core)
+├── python/
+│   ├── bindings.cpp                 # nanobind C++/Python bindings
+│   └── cuframe/
+│       └── __init__.py              # Python package
 ├── include/
 │   └── cuframe/
-│       ├── pipeline.h             # Pipeline, PipelineBuilder (primary API)
-│       ├── batch_pool.h           # BatchPool (refcounted batch allocation)
-│       ├── gpu_frame_batch.h      # GpuFrameBatch (NCHW tensor)
-│       ├── decoder.h              # NVDEC hardware decode wrapper
-│       ├── demuxer.h              # FFmpeg container parser
-│       ├── device_buffer.h        # RAII GPU memory
-│       ├── frame_pool.h           # pre-allocated NV12 buffer pool
-│       ├── cuda_utils.h           # error checking macros
+│       ├── cuframe.h                # umbrella header
+│       ├── pipeline.h               # Pipeline, PipelineBuilder (primary API)
+│       ├── batch_pool.h             # BatchPool (refcounted batch allocation)
+│       ├── gpu_frame_batch.h        # GpuFrameBatch (NCHW tensor)
+│       ├── decoder.h                # NVDEC hardware decode wrapper
+│       ├── demuxer.h                # FFmpeg container parser
+│       ├── device_buffer.h          # RAII GPU memory
+│       ├── frame_pool.h             # pre-allocated NV12 buffer pool
+│       ├── cuda_utils.h             # error checking macros
 │       └── kernels/
-│           ├── color_convert.h    # NV12 → RGB planar
-│           ├── resize.h           # bilinear resize + letterbox
-│           ├── normalize.h        # per-channel normalize
-│           ├── fused_preprocess.h # single-pass NV12 → tensor
-│           └── roi_crop.h         # batched ROI crop from NV12
+│           ├── color_convert.h      # NV12 → RGB planar
+│           ├── resize.h             # bilinear resize + letterbox
+│           ├── normalize.h          # per-channel normalize
+│           ├── fused_preprocess.h   # single-pass NV12 → tensor
+│           └── roi_crop.h           # batched ROI crop from NV12
 ├── src/
 │   └── cuframe/
 │       ├── pipeline.cpp
@@ -223,20 +255,27 @@ cuframe/
 │           ├── fused_preprocess.cu
 │           └── roi_crop.cu
 ├── tests/
+│   └── python/                      # Python binding tests
 ├── benchmarks/
 ├── examples/
-│   ├── basic_pipeline.cpp         # working pipeline example
-│   ├── tensorrt_inference.cpp     # TensorRT integration (pseudocode)
-│   └── onnxruntime_inference.cpp  # ONNX Runtime integration (pseudocode)
+│   ├── basic_pipeline.cpp           # C++ pipeline example
+│   ├── classification_pipeline.cpp  # C++ classification example
+│   ├── two_stage_pipeline.cpp       # C++ two-stage example
+│   ├── tensorrt_inference.cpp       # TensorRT integration (pseudocode)
+│   ├── onnxruntime_inference.cpp    # ONNX Runtime integration (pseudocode)
+│   └── python/
+│       ├── basic_pipeline.py        # Python pipeline + DLPack
+│       ├── two_stage_pipeline.py    # detect → crop → classify
+│       └── ort_inference.py         # ORT io_binding (no torch needed)
 ├── docs/
-│   └── api.md                     # C++ API reference
+│   └── api.md                       # API reference (Python + C++)
 └── third_party/
-    └── nv-codec-headers/          # vendored NVIDIA Video Codec SDK headers
+    └── nv-codec-headers/            # vendored NVIDIA Video Codec SDK headers
 ```
 
 ## API reference
 
-see [docs/api.md](docs/api.md) for the full C++ API reference.
+see [docs/api.md](docs/api.md) for the full API reference (Python and C++).
 
 ## license
 

@@ -1,4 +1,119 @@
-# cuframe C++ API reference
+# cuframe API reference
+
+## Python API
+
+### installation
+
+```bash
+pip install .  # from source (requires CUDA toolkit + FFmpeg dev packages)
+```
+
+for development builds without `pip install`:
+```bash
+cmake --preset default && cmake --build build
+PYTHONPATH=python:build/src python -c "import cuframe; print('ok')"
+```
+
+### quick start
+
+```python
+import cuframe
+import torch
+
+pipeline = (cuframe.Pipeline.builder()
+    .input("video.mp4")
+    .resize(640, 640, cuframe.ResizeMode.LETTERBOX)
+    .normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+    .batch(8)
+    .build())
+
+for batch in pipeline:
+    tensor = torch.from_dlpack(batch)
+    # tensor: (N, 3, 640, 640), float32, cuda:0
+```
+
+the Python API mirrors the C++ API. see the C++ sections below for full documentation of each builder method and class.
+
+### DLPack zero-copy
+
+`GpuFrameBatch` implements the DLPack protocol (`__dlpack__`, `__dlpack_device__`). the batch's GPU memory stays alive as long as any downstream tensor references it.
+
+**PyTorch path:**
+```python
+tensor = torch.from_dlpack(batch)  # zero-copy CUDA tensor
+output = model(tensor)
+```
+
+**ONNX Runtime path** (no torch dependency needed):
+```python
+io = session.io_binding()
+io.bind_input("images", "cuda", 0, np.float32,
+              list(batch.shape), batch.data_ptr)
+for name in output_names:
+    io.bind_output(name, "cuda")
+session.run_with_iobinding(io)
+```
+
+also works with CuPy (`cupy.from_dlpack(batch)`), JAX, and any other DLPack consumer.
+
+### iteration and frame_count
+
+always iterate with `for batch in pipeline:` — this works for all container formats.
+
+**do not** use `range(pipeline.frame_count)` — `frame_count` returns -1 for containers that don't store frame counts (MKV, some WebM). the `for batch in pipeline:` pattern handles end-of-stream automatically.
+
+```python
+# correct — always works
+for batch in pipeline:
+    process(batch)
+
+# also correct — explicit end-of-stream check
+batch = pipeline.next()  # returns None at end
+```
+
+`Pipeline` does not implement `__len__`. use `pipeline.frame_count` if you need the total frame count (with a -1 check):
+
+```python
+total = pipeline.frame_count if pipeline.frame_count >= 0 else None
+```
+
+### crop_rois — tuple support
+
+`crop_rois` accepts plain tuples `(x, y, w, h)` in addition to `Rect` objects. both can be mixed in the same list:
+
+```python
+rois = [(10, 20, 100, 80), cuframe.Rect(50, 30, 60, 60)]
+pipeline.crop_rois(0, rois, crops, cuframe.YOLO_NORM)
+```
+
+### GpuFrameBatch properties
+
+| property | type | description |
+|----------|------|-------------|
+| `count` | int | valid frames in this batch (may be < batch_size for the last batch) |
+| `batch_size` | int | allocated capacity |
+| `channels` | int | always 3 (RGB or BGR) |
+| `height` | int | output height in pixels |
+| `width` | int | output width in pixels |
+| `shape` | tuple | `(count, channels, height, width)` — pass to `list(batch.shape)` for ORT |
+| `data_ptr` | int | raw CUDA device pointer — pass to ORT `io_binding.bind_input()` |
+
+### differences from C++ API
+
+- pipeline is iterable: `for batch in pipeline:` (vs C++ `while (auto batch = pipeline.next())`)
+- `pipeline.next()` returns `None` at end-of-stream (not `std::nullopt`)
+- metadata via properties: `pipeline.source_width` (not `pipeline.source_width()`)
+- `crop_rois` accepts a list of `Rect` objects or `(x, y, w, h)` tuples
+- `make_norm_params(mean, std)` takes lists: `make_norm_params([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])`
+
+### constants
+
+- `cuframe.IMAGENET_NORM` — ImageNet normalization (mean={0.485, 0.456, 0.406}, std={0.229, 0.224, 0.225})
+- `cuframe.YOLO_NORM` — YOLO normalization (pixel / 255.0)
+
+---
+
+## C++ API
 
 ## Pipeline API
 
