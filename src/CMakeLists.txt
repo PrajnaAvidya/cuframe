@@ -14,6 +14,8 @@ add_library(cuframe STATIC
     cuframe/kernels/roi_crop.cu
 )
 
+set_target_properties(cuframe PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
 target_include_directories(cuframe PUBLIC
     ${PROJECT_SOURCE_DIR}/include
 )
@@ -37,3 +39,8 @@ target_link_libraries(cuframe PUBLIC
 
 add_executable(cuframe_main main.cpp)
 target_link_libraries(cuframe_main PRIVATE cuframe)
+
+if(CUFRAME_PYTHON_BINDINGS)
+    nanobind_add_module(_cuframe ${PROJECT_SOURCE_DIR}/python/bindings.cpp)
+    target_link_libraries(_cuframe PRIVATE cuframe)
+endif()

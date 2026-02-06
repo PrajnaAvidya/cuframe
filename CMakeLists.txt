@@ -21,6 +21,21 @@ pkg_check_modules(LIBAV REQUIRED IMPORTED_TARGET
     libavutil
 )
 
+# python bindings (optional — skipped if python not found)
+find_package(Python 3.9 COMPONENTS Interpreter Development.Module QUIET)
+if(Python_FOUND)
+    include(FetchContent)
+    FetchContent_Declare(nanobind
+        GIT_REPOSITORY https://github.com/wjakob/nanobind.git
+        GIT_TAG v2.4.0)
+    FetchContent_MakeAvailable(nanobind)
+    set(CUFRAME_PYTHON_BINDINGS ON)
+    message(STATUS "Python bindings: ON (Python ${Python_VERSION})")
+else()
+    set(CUFRAME_PYTHON_BINDINGS OFF)
+    message(STATUS "Python bindings: OFF (Python not found)")
+endif()
+
 enable_testing()
 
 add_subdirectory(src)
