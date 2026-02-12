@@ -178,7 +178,7 @@ preprocessing is 20-30x faster with cuframe. end-to-end speedup is 1.5-1.9x beca
 
 ### requirements
 
-- NVIDIA GPU (tested on Ampere/RTX 3080, sm_86)
+- NVIDIA GPU (Maxwell or newer, sm_50+)
 - CUDA Toolkit 12.x
 - NVIDIA driver with `libnvcuvid.so` (ships with standard driver installs)
 - FFmpeg development libraries (`libavformat`, `libavcodec`, `libavutil`)
@@ -200,6 +200,8 @@ ctest --test-dir build
 # run examples
 ./build/examples/basic_pipeline tests/data/test_h264.mp4
 ```
+
+the build auto-detects your GPU architecture. to target a specific arch (e.g. for cross-compilation), pass `-DCMAKE_CUDA_ARCHITECTURES=90`.
 
 **note:** the cmake preset is required on systems with glibc 2.42+ (Fedora 43+). it passes `-U_GNU_SOURCE` to nvcc to work around a `noexcept` conflict between glibc's C23 math declarations and CUDA 12.9's `crt/math_functions.h`. see `CMakePresets.json` for details.
 
