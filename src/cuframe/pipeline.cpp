@@ -15,6 +15,7 @@ extern "C" {
 #include <libavcodec/packet.h>
 }
 
+#include <algorithm>
 #include <stdexcept>
 #include <vector>
 
@@ -69,6 +70,9 @@ struct Pipeline::Impl {
     bool seeking = false;
     int64_t seek_target_pts = 0;
 
+    // temporal stride state
+    int stride_skip = 0;  // frames to skip before collecting next
+
     void preprocess(const DecodedFrame& frame, float* out_buf,
                     float* rgb_buf, cudaStream_t stream) const {
         CUFRAME_NVTX_PUSH("cuframe::preprocess");
@@ -105,7 +109,10 @@ struct Pipeline::Impl {
         if (flushed) return;
         CUFRAME_NVTX_PUSH("cuframe::prefetch");
 
-        int target = config.batch_size;
+        // with temporal stride, need stride*batch_size decoded frames to fill a batch.
+        // cap at 4x batch_size to avoid huge pending vectors with large strides.
+        int target = std::min(config.batch_size * config.temporal_stride,
+                              config.batch_size * 4);
         int have = static_cast<int>(pending.size()) - pending_idx;
 
         while (have < target) {
@@ -170,6 +177,9 @@ void Pipeline::seek(double seconds) {
     s.flushed = false;
     s.eos = false;
     s.retained_count_ = 0;
+
+    // reset stride state — first frame after seek is always collected
+    s.stride_skip = 0;
 
     // set up precise seek — next() will skip frames before target
     auto& info = s.demuxer->video_info();
@@ -249,6 +259,14 @@ std::optional<std::shared_ptr<GpuFrameBatch>> Pipeline::next() {
                 s.seeking = false;
             }
 
+            // temporal stride: skip frames between collected ones
+            if (s.stride_skip > 0) {
+                s.pending[s.pending_idx] = {};  // release PooledBuffer
+                s.pending_idx++;
+                s.stride_skip--;
+                continue;
+            }
+
             float* rgb = s.rgb_bufs.empty() ? nullptr : s.rgb_bufs[collected];
             s.preprocess(frame, s.out_bufs[collected], rgb, s.preprocess_stream);
 
@@ -278,6 +296,7 @@ std::optional<std::shared_ptr<GpuFrameBatch>> Pipeline::next() {
             s.pending[s.pending_idx] = {};  // release PooledBuffer to decoder pool
             s.pending_idx++;
             collected++;
+            s.stride_skip = s.config.temporal_stride - 1;
         }
 
         // compact when all consumed
@@ -395,6 +414,13 @@ PipelineBuilder& PipelineBuilder::device(int gpu_id) {
     return *this;
 }
 
+PipelineBuilder& PipelineBuilder::temporal_stride(int stride) {
+    if (stride < 1)
+        throw std::invalid_argument("pipeline: temporal_stride must be >= 1");
+    config_.temporal_stride = stride;
+    return *this;
+}
+
 Pipeline PipelineBuilder::build() {
     if (config_.input_path.empty())
         throw std::invalid_argument("pipeline: input path required");
@@ -457,8 +483,11 @@ Pipeline PipelineBuilder::build() {
     bool use_fused = (config_.has_resize || config_.has_center_crop)
                      && config_.has_normalize;
 
-    // double-buffer headroom: prefetch decodes batch N+1 while batch N preprocesses
-    int pool_count = 2 * config_.batch_size + 4;
+    // pool needs room for prefetch buffer + in-flight batch + headroom.
+    // with temporal stride, prefetch decodes stride*batch_size frames (capped at 4x).
+    int prefetch_target = std::min(config_.batch_size * config_.temporal_stride,
+                                   config_.batch_size * 4);
+    int pool_count = prefetch_target + config_.batch_size + 4;
     auto decoder = std::make_unique<Decoder>(info, pool_count);
 
     cudaStream_t preprocess_stream;
@@ -496,7 +525,7 @@ Pipeline PipelineBuilder::build() {
     impl->rgb_bufs = std::move(rgb_bufs);
     impl->out_bufs = std::move(out_bufs);
     impl->batch_pool = std::move(batch_pool);
-    impl->pending.reserve(config_.batch_size);
+    impl->pending.reserve(config_.batch_size * std::min(config_.temporal_stride, 4));
     impl->packet = av_packet_alloc();
 
     Pipeline p;

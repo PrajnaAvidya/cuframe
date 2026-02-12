@@ -1190,3 +1190,140 @@ TEST(PipelineTest, SeekWithRetainDecoded) {
     EXPECT_EQ(frame.width, 320);
     EXPECT_EQ(frame.height, 240);
 }
+
+// ============================================================================
+// temporal stride — stride=1 is same as default
+// ============================================================================
+
+TEST(PipelineTest, TemporalStride1_Default) {
+    if (!test_video_exists()) GTEST_SKIP() << "test video not found";
+
+    auto pipeline = cuframe::Pipeline::builder()
+        .input(TEST_VIDEO)
+        .resize(DST_W, DST_H)
+        .normalize({0.485f, 0.456f, 0.406f}, {0.229f, 0.224f, 0.225f})
+        .batch(8)
+        .temporal_stride(1)
+        .build();
+
+    int total = 0;
+    while (auto batch = pipeline.next())
+        total += (*batch)->count();
+
+    EXPECT_EQ(total, 90);
+}
+
+// ============================================================================
+// temporal stride — stride=2, collect every other frame
+// ============================================================================
+
+TEST(PipelineTest, TemporalStride2) {
+    if (!test_video_exists()) GTEST_SKIP() << "test video not found";
+
+    auto pipeline = cuframe::Pipeline::builder()
+        .input(TEST_VIDEO)
+        .resize(DST_W, DST_H)
+        .normalize({0.485f, 0.456f, 0.406f}, {0.229f, 0.224f, 0.225f})
+        .batch(4)
+        .temporal_stride(2)
+        .build();
+
+    int total = 0;
+    while (auto batch = pipeline.next())
+        total += (*batch)->count();
+
+    // 90 frames, stride=2 → 45 collected
+    EXPECT_EQ(total, 45);
+}
+
+// ============================================================================
+// temporal stride — stride=3
+// ============================================================================
+
+TEST(PipelineTest, TemporalStride3) {
+    if (!test_video_exists()) GTEST_SKIP() << "test video not found";
+
+    auto pipeline = cuframe::Pipeline::builder()
+        .input(TEST_VIDEO)
+        .resize(DST_W, DST_H)
+        .normalize({0.485f, 0.456f, 0.406f}, {0.229f, 0.224f, 0.225f})
+        .batch(8)
+        .temporal_stride(3)
+        .build();
+
+    int total = 0;
+    while (auto batch = pipeline.next())
+        total += (*batch)->count();
+
+    // 90 frames, stride=3 → 30 collected
+    EXPECT_EQ(total, 30);
+}
+
+// ============================================================================
+// temporal stride — large stride, only first frame collected
+// ============================================================================
+
+TEST(PipelineTest, TemporalStrideLarge) {
+    if (!test_video_exists()) GTEST_SKIP() << "test video not found";
+
+    auto pipeline = cuframe::Pipeline::builder()
+        .input(TEST_VIDEO)
+        .resize(DST_W, DST_H)
+        .batch(1)
+        .temporal_stride(90)
+        .build();
+
+    int total = 0;
+    while (auto batch = pipeline.next())
+        total += (*batch)->count();
+
+    // stride=90 on 90-frame video → collect frame 0, skip 89 which exhausts video
+    EXPECT_EQ(total, 1);
+}
+
+// ============================================================================
+// temporal stride — combined with seek
+// ============================================================================
+
+TEST(PipelineTest, TemporalStrideWithSeek) {
+    if (!test_video_exists()) GTEST_SKIP() << "test video not found";
+
+    auto pipeline = cuframe::Pipeline::builder()
+        .input(TEST_VIDEO)
+        .resize(DST_W, DST_H)
+        .normalize({0.485f, 0.456f, 0.406f}, {0.229f, 0.224f, 0.225f})
+        .batch(4)
+        .temporal_stride(2)
+        .build();
+
+    pipeline.seek(1.5);
+
+    int total = 0;
+    while (auto batch = pipeline.next())
+        total += (*batch)->count();
+
+    // ~45 frames remaining after 1.5s, stride=2 → ~22-23 collected
+    EXPECT_GT(total, 15);
+    EXPECT_LT(total, 30);
+}
+
+// ============================================================================
+// temporal stride — invalid values throw
+// ============================================================================
+
+TEST(PipelineTest, TemporalStrideInvalid) {
+    EXPECT_THROW(
+        cuframe::Pipeline::builder()
+            .input(TEST_VIDEO)
+            .temporal_stride(0)
+            .build(),
+        std::invalid_argument
+    );
+    EXPECT_THROW(
+        cuframe::Pipeline::builder()
+            .input(TEST_VIDEO)
+            .temporal_stride(-1)
+            .build(),
+        std::invalid_argument
+    );
+}

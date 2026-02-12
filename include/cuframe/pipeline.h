@@ -74,6 +74,9 @@ struct PipelineConfig {
 
     // pool
     int pool_size = 2;
+
+    // temporal stride (take every Nth frame, 1 = every frame)
+    int temporal_stride = 1;
 };
 
 class Pipeline;
@@ -92,6 +95,7 @@ public:
     PipelineBuilder& channel_order_bgr(bool bgr = true);
     PipelineBuilder& retain_decoded(bool retain = true);
     PipelineBuilder& device(int gpu_id);
+    PipelineBuilder& temporal_stride(int stride);
 
     Pipeline build();
 
