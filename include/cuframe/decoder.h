@@ -37,6 +37,10 @@ public:
     // flush remaining frames at end of stream
     void flush(std::vector<DecodedFrame>& out);
 
+    // reset parser state after a seek. clears pending frames and recreates the
+    // NVDEC parser so it can accept fresh packets from a new position.
+    void reset();
+
     int width() const;
     int height() const;
     CUstream stream() const;
@@ -55,6 +59,7 @@ private:
     CUstream stream_ = nullptr;
     CUvideoparser parser_ = nullptr;
     CUvideodecoder decoder_ = nullptr;
+    CUVIDPARSERPARAMS parser_params_{};  // saved for reset
 
     int width_ = 0;
     int height_ = 0;

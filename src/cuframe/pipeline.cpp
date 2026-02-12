@@ -65,6 +65,10 @@ struct Pipeline::Impl {
     // reusable packet
     AVPacket* packet = nullptr;
 
+    // seek state (precise seek — discard pre-target frames in next())
+    bool seeking = false;
+    int64_t seek_target_pts = 0;
+
     void preprocess(const DecodedFrame& frame, float* out_buf,
                     float* rgb_buf, cudaStream_t stream) const {
         CUFRAME_NVTX_PUSH("cuframe::preprocess");
@@ -148,6 +152,36 @@ int64_t Pipeline::frame_count() const { return impl_->demuxer->video_info().num_
 const LetterboxInfo& Pipeline::letterbox_info() const { return impl_->letterbox; }
 cudaStream_t Pipeline::stream() const { return impl_->preprocess_stream; }
 
+void Pipeline::seek(double seconds) {
+    auto& s = *impl_;
+    CUFRAME_CUDA_CHECK(cudaSetDevice(s.config.device_id));
+
+    // release all pending decoded frames (return PooledBuffers to decoder pool)
+    s.pending.clear();
+    s.pending_idx = 0;
+
+    // reset decoder parser (clear NAL buffer, DPB, reordering state)
+    s.decoder->reset();
+
+    // seek demuxer to keyframe at or before target
+    s.demuxer->seek(seconds);
+
+    // reset pipeline state machine
+    s.flushed = false;
+    s.eos = false;
+    s.retained_count_ = 0;
+
+    // set up precise seek — next() will skip frames before target
+    auto& info = s.demuxer->video_info();
+    if (seconds <= 0.0) {
+        s.seeking = false;
+    } else {
+        s.seeking = true;
+        s.seek_target_pts = static_cast<int64_t>(
+            seconds * info.time_base.den / info.time_base.num);
+    }
+}
+
 void Pipeline::crop_rois(int batch_idx,
                           const Rect* rois, int num_rois,
                           GpuFrameBatch& output,
@@ -203,8 +237,19 @@ std::optional<std::shared_ptr<GpuFrameBatch>> Pipeline::next() {
         // consume pending decoded frames
         while (s.pending_idx < static_cast<int>(s.pending.size())
                && collected < s.config.batch_size) {
-            float* rgb = s.rgb_bufs.empty() ? nullptr : s.rgb_bufs[collected];
             auto& frame = s.pending[s.pending_idx];
+
+            // precise seek: skip frames before target timestamp
+            if (s.seeking) {
+                if (frame.timestamp < s.seek_target_pts) {
+                    s.pending[s.pending_idx] = {};  // release PooledBuffer
+                    s.pending_idx++;
+                    continue;
+                }
+                s.seeking = false;
+            }
+
+            float* rgb = s.rgb_bufs.empty() ? nullptr : s.rgb_bufs[collected];
             s.preprocess(frame, s.out_bufs[collected], rgb, s.preprocess_stream);
 
             // retain NV12 copy before releasing pool buffer

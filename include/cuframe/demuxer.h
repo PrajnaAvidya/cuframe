@@ -36,6 +36,10 @@ public:
     // caller owns packet lifecycle (av_packet_alloc/av_packet_free/av_packet_unref).
     bool read_packet(AVPacket* packet);
 
+    // seek to the keyframe at or before the given timestamp.
+    // after seeking, the next read_packet() returns packets from the seek position.
+    void seek(double seconds);
+
 private:
     AVFormatContext* fmt_ctx_ = nullptr;
     AVBSFContext* bsf_ctx_ = nullptr;  // annex-b conversion filter (h264/hevc in mp4/mkv)

@@ -27,16 +27,16 @@ Decoder::Decoder(const VideoInfo& info, int pool_count)
     CUFRAME_CU_CHECK(cuCtxGetCurrent(&cu_ctx_));
     CUFRAME_CU_CHECK(cuStreamCreate(&stream_, CU_STREAM_DEFAULT));
 
-    CUVIDPARSERPARAMS parser_params = {};
-    parser_params.CodecType = to_nvdec_codec(info.codec_id);
-    parser_params.ulMaxNumDecodeSurfaces = 1;
-    parser_params.ulMaxDisplayDelay = 1;
-    parser_params.pUserData = this;
-    parser_params.pfnSequenceCallback = handle_sequence;
-    parser_params.pfnDecodePicture = handle_decode;
-    parser_params.pfnDisplayPicture = handle_display;
+    parser_params_ = {};
+    parser_params_.CodecType = to_nvdec_codec(info.codec_id);
+    parser_params_.ulMaxNumDecodeSurfaces = 1;
+    parser_params_.ulMaxDisplayDelay = 1;
+    parser_params_.pUserData = this;
+    parser_params_.pfnSequenceCallback = handle_sequence;
+    parser_params_.pfnDecodePicture = handle_decode;
+    parser_params_.pfnDisplayPicture = handle_display;
 
-    CUFRAME_CU_CHECK(cuvidCreateVideoParser(&parser_, &parser_params));
+    CUFRAME_CU_CHECK(cuvidCreateVideoParser(&parser_, &parser_params_));
 }
 
 Decoder::~Decoder() {
@@ -47,6 +47,19 @@ Decoder::~Decoder() {
         cuvidDestroyDecoder(decoder_);
         cuCtxPopCurrent(nullptr);
     }
+}
+
+void Decoder::reset() {
+    // discard accumulated frames (releases PooledBuffers back to pool)
+    pending_frames_.clear();
+
+    // destroy and recreate parser — cleanest way to reset all internal state
+    // (NAL buffer, DPB, B-frame reordering, reference frames)
+    if (parser_) {
+        cuvidDestroyVideoParser(parser_);
+        parser_ = nullptr;
+    }
+    CUFRAME_CU_CHECK(cuvidCreateVideoParser(&parser_, &parser_params_));
 }
 
 void Decoder::decode(const AVPacket* packet, std::vector<DecodedFrame>& out) {

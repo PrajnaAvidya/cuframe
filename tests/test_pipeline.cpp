@@ -1027,3 +1027,166 @@ TEST(PipelineTest, CropRois_ZeroRois) {
     pipeline.crop_rois(0, nullptr, 0, *crops, cuframe::IMAGENET_NORM);
     EXPECT_EQ(crops->count(), 0);
 }
+
+// ============================================================================
+// seek — to start produces all frames
+// ============================================================================
+
+TEST(PipelineTest, SeekToStart) {
+    if (!test_video_exists()) GTEST_SKIP() << "test video not found";
+
+    auto pipeline = cuframe::Pipeline::builder()
+        .input(TEST_VIDEO)
+        .resize(DST_W, DST_H)
+        .normalize({0.485f, 0.456f, 0.406f}, {0.229f, 0.224f, 0.225f})
+        .batch(8)
+        .build();
+
+    pipeline.seek(0.0);
+
+    int total = 0;
+    while (auto batch = pipeline.next())
+        total += (*batch)->count();
+
+    EXPECT_EQ(total, 90);
+}
+
+// ============================================================================
+// seek — to middle, fewer frames than full video
+// ============================================================================
+
+TEST(PipelineTest, SeekToMiddle) {
+    if (!test_video_exists()) GTEST_SKIP() << "test video not found";
+
+    auto pipeline = cuframe::Pipeline::builder()
+        .input(TEST_VIDEO)
+        .resize(DST_W, DST_H)
+        .normalize({0.485f, 0.456f, 0.406f}, {0.229f, 0.224f, 0.225f})
+        .batch(8)
+        .build();
+
+    pipeline.seek(1.5);
+
+    int total = 0;
+    while (auto batch = pipeline.next()) {
+        EXPECT_GT((*batch)->count(), 0);
+        total += (*batch)->count();
+    }
+
+    // 1.5s into a 3s video at 30fps → ~45 frames remaining
+    EXPECT_GT(total, 30);
+    EXPECT_LT(total, 60);
+}
+
+// ============================================================================
+// seek — past end returns nullopt
+// ============================================================================
+
+TEST(PipelineTest, SeekPastEnd) {
+    if (!test_video_exists()) GTEST_SKIP() << "test video not found";
+
+    auto pipeline = cuframe::Pipeline::builder()
+        .input(TEST_VIDEO)
+        .resize(DST_W, DST_H)
+        .batch(8)
+        .build();
+
+    pipeline.seek(10.0);  // video is 3 seconds
+
+    int total = 0;
+    while (auto batch = pipeline.next())
+        total += (*batch)->count();
+
+    // seeking past end should yield very few or no frames
+    EXPECT_LT(total, 10);
+}
+
+// ============================================================================
+// seek — after EOS, pipeline can be reused
+// ============================================================================
+
+TEST(PipelineTest, SeekAfterEOS) {
+    if (!test_video_exists()) GTEST_SKIP() << "test video not found";
+
+    auto pipeline = cuframe::Pipeline::builder()
+        .input(TEST_VIDEO)
+        .resize(DST_W, DST_H)
+        .normalize({0.485f, 0.456f, 0.406f}, {0.229f, 0.224f, 0.225f})
+        .batch(8)
+        .build();
+
+    // exhaust the pipeline
+    while (pipeline.next()) {}
+
+    // seek back to start
+    pipeline.seek(0.0);
+
+    int total = 0;
+    while (auto batch = pipeline.next())
+        total += (*batch)->count();
+
+    EXPECT_EQ(total, 90);
+}
+
+// ============================================================================
+// seek — mid-iteration doesn't crash, returns frames from new position
+// ============================================================================
+
+TEST(PipelineTest, SeekResetsPrefetch) {
+    if (!test_video_exists()) GTEST_SKIP() << "test video not found";
+
+    auto pipeline = cuframe::Pipeline::builder()
+        .input(TEST_VIDEO)
+        .resize(DST_W, DST_H)
+        .normalize({0.485f, 0.456f, 0.406f}, {0.229f, 0.224f, 0.225f})
+        .batch(4)
+        .build();
+
+    // consume a few batches
+    for (int i = 0; i < 3; ++i) {
+        auto batch = pipeline.next();
+        ASSERT_TRUE(batch.has_value());
+    }
+
+    // seek back to start mid-iteration
+    pipeline.seek(0.0);
+
+    int total = 0;
+    while (auto batch = pipeline.next())
+        total += (*batch)->count();
+
+    EXPECT_EQ(total, 90);
+}
+
+// ============================================================================
+// seek — with retain_decoded, retained frames valid after seek
+// ============================================================================
+
+TEST(PipelineTest, SeekWithRetainDecoded) {
+    if (!test_video_exists()) GTEST_SKIP() << "test video not found";
+
+    auto pipeline = cuframe::Pipeline::builder()
+        .input(TEST_VIDEO)
+        .resize(DST_W, DST_H)
+        .normalize({0.485f, 0.456f, 0.406f}, {0.229f, 0.224f, 0.225f})
+        .retain_decoded(true)
+        .batch(1)
+        .build();
+
+    // consume some frames
+    auto batch1 = pipeline.next();
+    ASSERT_TRUE(batch1.has_value());
+    EXPECT_EQ(pipeline.retained_count(), 1);
+
+    // seek to middle
+    pipeline.seek(1.5);
+
+    auto batch2 = pipeline.next();
+    ASSERT_TRUE(batch2.has_value());
+    EXPECT_EQ(pipeline.retained_count(), 1);
+
+    auto& frame = pipeline.retained_frame(0);
+    EXPECT_NE(frame.data, nullptr);
+    EXPECT_EQ(frame.width, 320);
+    EXPECT_EQ(frame.height, 240);
+}

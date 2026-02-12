@@ -106,4 +106,21 @@ bool Demuxer::read_packet(AVPacket* packet) {
     }
 }
 
+void Demuxer::seek(double seconds) {
+    auto* stream = fmt_ctx_->streams[video_stream_idx_];
+    int64_t ts = (seconds <= 0.0) ? 0
+        : static_cast<int64_t>(seconds * stream->time_base.den / stream->time_base.num);
+
+    int ret = av_seek_frame(fmt_ctx_, video_stream_idx_, ts, AVSEEK_FLAG_BACKWARD);
+    if (ret < 0) {
+        char errbuf[AV_ERROR_MAX_STRING_SIZE];
+        av_strerror(ret, errbuf, sizeof(errbuf));
+        throw std::runtime_error("seek failed: " + std::string(errbuf));
+    }
+
+    // flush bitstream filter state (stale annex-b conversion context)
+    if (bsf_ctx_)
+        av_bsf_flush(bsf_ctx_);
+}
+
 } // namespace cuframe

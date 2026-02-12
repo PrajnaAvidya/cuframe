@@ -109,6 +109,12 @@ public:
     // when all refs dropped, batch returns to internal pool.
     std::optional<std::shared_ptr<GpuFrameBatch>> next();
 
+    // seek to the given timestamp (in seconds).
+    // the next call to next() returns frames starting at or after this position.
+    // resets end-of-stream state, so a pipeline that returned nullopt becomes
+    // usable again after seeking. thread-unsafe — don't call during next().
+    void seek(double seconds);
+
     const PipelineConfig& config() const;
 
     // source video metadata (delegates to internal demuxer)

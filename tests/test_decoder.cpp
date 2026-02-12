@@ -81,6 +81,43 @@ TEST_F(DecoderTest, FrameDataIsNonZero) {
     EXPECT_FALSE(all_zero) << "decoded frame luma data is all zeros";
 }
 
+TEST_F(DecoderTest, ResetEmpty) {
+    // reset on a fresh decoder shouldn't crash
+    decoder_->reset();
+    SUCCEED();
+}
+
+TEST_F(DecoderTest, ResetAfterDecode) {
+    AVPacket* pkt = av_packet_alloc();
+
+    // decode some packets
+    int fed = 0;
+    while (demuxer_->read_packet(pkt) && fed < 10) {
+        decoder_->decode(pkt, frames_);
+        av_packet_unref(pkt);
+        fed++;
+    }
+    ASSERT_GT(frames_.size(), 0u);
+    frames_.clear();
+
+    // reset decoder
+    decoder_->reset();
+
+    // seek demuxer back to start, decode fresh packets
+    demuxer_ = std::make_unique<cuframe::Demuxer>(TEST_VIDEO);
+    decoder_ = std::make_unique<cuframe::Decoder>(demuxer_->video_info(), 150);
+
+    while (demuxer_->read_packet(pkt)) {
+        decoder_->decode(pkt, frames_);
+        av_packet_unref(pkt);
+    }
+    decoder_->flush(frames_);
+
+    av_packet_free(&pkt);
+
+    EXPECT_GT(frames_.size(), 60u);
+}
+
 TEST_F(DecoderTest, FlushProducesRemainingFrames) {
     AVPacket* pkt = av_packet_alloc();
     size_t decode_count = 0;
