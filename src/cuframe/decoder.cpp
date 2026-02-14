@@ -70,9 +70,15 @@ void Decoder::decode(const AVPacket* packet, std::vector<DecodedFrame>& out) {
     cupkt.flags = CUVID_PKT_TIMESTAMP;
     cupkt.timestamp = packet->pts;
 
+    stored_error_ = nullptr;
     CUFRAME_CU_CHECK(cuvidParseVideoData(parser_, &cupkt));
 
-    // callbacks fire synchronously — pending_frames_ now populated
+    // rethrow any exception that occurred inside a callback
+    if (stored_error_) {
+        pending_frames_.clear();
+        std::rethrow_exception(stored_error_);
+    }
+
     for (auto& f : pending_frames_)
         out.push_back(std::move(f));
     pending_frames_.clear();
@@ -83,7 +89,13 @@ void Decoder::flush(std::vector<DecodedFrame>& out) {
     CUVIDSOURCEDATAPACKET cupkt = {};
     cupkt.flags = CUVID_PKT_ENDOFSTREAM;
 
+    stored_error_ = nullptr;
     CUFRAME_CU_CHECK(cuvidParseVideoData(parser_, &cupkt));
+
+    if (stored_error_) {
+        pending_frames_.clear();
+        std::rethrow_exception(stored_error_);
+    }
 
     for (auto& f : pending_frames_)
         out.push_back(std::move(f));
@@ -97,53 +109,64 @@ CUstream Decoder::stream() const { return stream_; }
 // --- callbacks ---
 
 int Decoder::on_sequence(CUVIDEOFORMAT* fmt) {
-    // resolution change mid-stream: tear down old decoder + pool
-    if (decoder_) {
-        pool_.reset();
+    try {
+        // resolution change mid-stream: tear down old decoder + pool
+        if (decoder_) {
+            pool_.reset();
+            cuCtxPushCurrent(cu_ctx_);
+            cuvidDestroyDecoder(decoder_);
+            cuCtxPopCurrent(nullptr);
+            decoder_ = nullptr;
+        }
+
+        width_ = fmt->display_area.right - fmt->display_area.left;
+        height_ = fmt->display_area.bottom - fmt->display_area.top;
+        surface_height_ = fmt->coded_height;
+
+        bit_depth_ = fmt->bit_depth_luma_minus8 + 8;
+
+        CUVIDDECODECREATEINFO ci = {};
+        ci.CodecType = fmt->codec;
+        ci.ChromaFormat = fmt->chroma_format;
+        ci.OutputFormat = (bit_depth_ > 8)
+            ? cudaVideoSurfaceFormat_P016
+            : cudaVideoSurfaceFormat_NV12;
+        ci.bitDepthMinus8 = fmt->bit_depth_luma_minus8;
+        ci.DeinterlaceMode = fmt->progressive_sequence
+            ? cudaVideoDeinterlaceMode_Weave
+            : cudaVideoDeinterlaceMode_Adaptive;
+        ci.ulNumDecodeSurfaces = fmt->min_num_decode_surfaces;
+        ci.ulNumOutputSurfaces = 2;
+        ci.ulCreationFlags = cudaVideoCreate_PreferCUVID;
+        ci.ulWidth = fmt->coded_width;
+        ci.ulHeight = fmt->coded_height;
+        ci.ulMaxWidth = fmt->coded_width;
+        ci.ulMaxHeight = fmt->coded_height;
+        ci.ulTargetWidth = fmt->coded_width;
+        ci.ulTargetHeight = fmt->coded_height;
+
         cuCtxPushCurrent(cu_ctx_);
-        cuvidDestroyDecoder(decoder_);
+        CUFRAME_CU_CHECK(cuvidCreateDecoder(&decoder_, &ci));
         cuCtxPopCurrent(nullptr);
-        decoder_ = nullptr;
+
+        return fmt->min_num_decode_surfaces;
+    } catch (...) {
+        stored_error_ = std::current_exception();
+        return 0;
     }
-
-    width_ = fmt->display_area.right - fmt->display_area.left;
-    height_ = fmt->display_area.bottom - fmt->display_area.top;
-    surface_height_ = fmt->coded_height;
-
-    bit_depth_ = fmt->bit_depth_luma_minus8 + 8;
-
-    CUVIDDECODECREATEINFO ci = {};
-    ci.CodecType = fmt->codec;
-    ci.ChromaFormat = fmt->chroma_format;
-    ci.OutputFormat = (bit_depth_ > 8)
-        ? cudaVideoSurfaceFormat_P016
-        : cudaVideoSurfaceFormat_NV12;
-    ci.bitDepthMinus8 = fmt->bit_depth_luma_minus8;
-    ci.DeinterlaceMode = fmt->progressive_sequence
-        ? cudaVideoDeinterlaceMode_Weave
-        : cudaVideoDeinterlaceMode_Adaptive;
-    ci.ulNumDecodeSurfaces = fmt->min_num_decode_surfaces;
-    ci.ulNumOutputSurfaces = 2;
-    ci.ulCreationFlags = cudaVideoCreate_PreferCUVID;
-    ci.ulWidth = fmt->coded_width;
-    ci.ulHeight = fmt->coded_height;
-    ci.ulMaxWidth = fmt->coded_width;
-    ci.ulMaxHeight = fmt->coded_height;
-    ci.ulTargetWidth = fmt->coded_width;
-    ci.ulTargetHeight = fmt->coded_height;
-
-    cuCtxPushCurrent(cu_ctx_);
-    CUFRAME_CU_CHECK(cuvidCreateDecoder(&decoder_, &ci));
-    cuCtxPopCurrent(nullptr);
-
-    return fmt->min_num_decode_surfaces;
 }
 
 int Decoder::on_decode(CUVIDPICPARAMS* pic) {
-    cuCtxPushCurrent(cu_ctx_);
-    CUFRAME_CU_CHECK(cuvidDecodePicture(decoder_, pic));
-    cuCtxPopCurrent(nullptr);
-    return 1;
+    try {
+        cuCtxPushCurrent(cu_ctx_);
+        CUFRAME_CU_CHECK(cuvidDecodePicture(decoder_, pic));
+        cuCtxPopCurrent(nullptr);
+        return 1;
+    } catch (...) {
+        cuCtxPopCurrent(nullptr);
+        stored_error_ = std::current_exception();
+        return 0;
+    }
 }
 
 int Decoder::on_display(CUVIDPARSERDISPINFO* disp) {
@@ -157,58 +180,64 @@ int Decoder::on_display(CUVIDPARSERDISPINFO* disp) {
 
     cuCtxPushCurrent(cu_ctx_);
 
-    // map nvdec surface to get device pointer
     unsigned long long src_ptr = 0;
     unsigned int src_pitch = 0;
-    CUFRAME_CU_CHECK(cuvidMapVideoFrame(decoder_, disp->picture_index,
-                                         &src_ptr, &src_pitch, &map_params));
+    try {
+        CUFRAME_CU_CHECK(cuvidMapVideoFrame(decoder_, disp->picture_index,
+                                             &src_ptr, &src_pitch, &map_params));
 
-    // NV12: luma (height * pitch) + chroma (height/2 * pitch)
-    unsigned int luma_height = height_;
-    unsigned int chroma_height = (height_ + 1) / 2;
-    size_t frame_size = static_cast<size_t>(src_pitch) * (luma_height + chroma_height);
+        // NV12: luma (height * pitch) + chroma (height/2 * pitch)
+        unsigned int luma_height = height_;
+        unsigned int chroma_height = (height_ + 1) / 2;
+        size_t frame_size = static_cast<size_t>(src_pitch) * (luma_height + chroma_height);
 
-    // lazy pool creation — need actual src_pitch from first mapped frame
-    if (!pool_) {
-        pool_ = std::make_unique<FramePool>(frame_size, pool_count_);
-    }
+        // lazy pool creation — need actual src_pitch from first mapped frame
+        if (!pool_) {
+            pool_ = std::make_unique<FramePool>(frame_size, pool_count_);
+        }
 
-    auto buf = pool_->acquire();
-    if (!buf) {
+        auto buf = pool_->acquire();
+        if (!buf) {
+            CUFRAME_CU_CHECK(cuvidUnmapVideoFrame(decoder_, src_ptr));
+            cuCtxPopCurrent(nullptr);
+            throw std::logic_error("frame pool exhausted");
+        }
+
+        // copy luma plane
+        CUDA_MEMCPY2D cp = {};
+        cp.srcMemoryType = CU_MEMORYTYPE_DEVICE;
+        cp.srcDevice = src_ptr;
+        cp.srcPitch = src_pitch;
+        cp.dstMemoryType = CU_MEMORYTYPE_DEVICE;
+        cp.dstDevice = reinterpret_cast<CUdeviceptr>(buf->data());
+        cp.dstPitch = src_pitch;
+        cp.WidthInBytes = src_pitch;  // copy full pitched rows (no uninitialized gaps)
+        cp.Height = luma_height;
+        CUFRAME_CU_CHECK(cuMemcpy2DAsync(&cp, stream_));
+
+        // copy chroma plane (interleaved UV, offset by aligned surface height)
+        cp.srcDevice = src_ptr + src_pitch * ((surface_height_ + 1) & ~1u);
+        cp.dstDevice = reinterpret_cast<CUdeviceptr>(buf->data()) + src_pitch * luma_height;
+        cp.Height = chroma_height;
+        CUFRAME_CU_CHECK(cuMemcpy2DAsync(&cp, stream_));
+
+        CUFRAME_CU_CHECK(cuStreamSynchronize(stream_));
         CUFRAME_CU_CHECK(cuvidUnmapVideoFrame(decoder_, src_ptr));
+
         cuCtxPopCurrent(nullptr);
-        throw std::runtime_error("frame pool exhausted");
+
+        pending_frames_.push_back(DecodedFrame{
+            std::move(buf), width_, height_, src_pitch, disp->timestamp, stream_,
+            bit_depth_
+        });
+
+        return 1;
+    } catch (...) {
+        if (src_ptr) cuvidUnmapVideoFrame(decoder_, src_ptr);
+        cuCtxPopCurrent(nullptr);
+        stored_error_ = std::current_exception();
+        return 0;
     }
-
-    // copy luma plane
-    CUDA_MEMCPY2D cp = {};
-    cp.srcMemoryType = CU_MEMORYTYPE_DEVICE;
-    cp.srcDevice = src_ptr;
-    cp.srcPitch = src_pitch;
-    cp.dstMemoryType = CU_MEMORYTYPE_DEVICE;
-    cp.dstDevice = reinterpret_cast<CUdeviceptr>(buf->data());
-    cp.dstPitch = src_pitch;
-    cp.WidthInBytes = src_pitch;  // copy full pitched rows (no uninitialized gaps)
-    cp.Height = luma_height;
-    CUFRAME_CU_CHECK(cuMemcpy2DAsync(&cp, stream_));
-
-    // copy chroma plane (interleaved UV, offset by aligned surface height)
-    cp.srcDevice = src_ptr + src_pitch * ((surface_height_ + 1) & ~1u);
-    cp.dstDevice = reinterpret_cast<CUdeviceptr>(buf->data()) + src_pitch * luma_height;
-    cp.Height = chroma_height;
-    CUFRAME_CU_CHECK(cuMemcpy2DAsync(&cp, stream_));
-
-    CUFRAME_CU_CHECK(cuStreamSynchronize(stream_));
-    CUFRAME_CU_CHECK(cuvidUnmapVideoFrame(decoder_, src_ptr));
-
-    cuCtxPopCurrent(nullptr);
-
-    pending_frames_.push_back(DecodedFrame{
-        std::move(buf), width_, height_, src_pitch, disp->timestamp, stream_,
-        bit_depth_
-    });
-
-    return 1;
 }
 
 // --- static trampolines ---

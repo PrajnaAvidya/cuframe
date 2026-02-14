@@ -9,6 +9,7 @@
 #include <memory>
 #include <vector>
 #include <cstdint>
+#include <exception>
 
 namespace cuframe {
 
@@ -69,6 +70,11 @@ private:
     int bit_depth_ = 8;
     std::unique_ptr<FramePool> pool_;
     std::vector<DecodedFrame> pending_frames_;
+
+    // stored exception from callbacks — NVDEC callbacks are invoked from C code,
+    // so throwing through them is UB. instead, catch and store here, rethrow after
+    // cuvidParseVideoData returns.
+    std::exception_ptr stored_error_;
 };
 
 // map ffmpeg codec id to nvdec codec enum. throws on unsupported codec.
