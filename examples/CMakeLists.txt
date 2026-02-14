@@ -16,3 +16,6 @@ target_link_libraries(two_stage_pipeline PRIVATE cuframe)
 
 add_executable(temporal_pipeline temporal_pipeline.cpp)
 target_link_libraries(temporal_pipeline PRIVATE cuframe)
+
+add_executable(error_recovery error_recovery.cpp)
+target_link_libraries(error_recovery PRIVATE cuframe)

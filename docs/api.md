@@ -73,6 +73,34 @@ for clip in pipeline:
 
 stride=1 (default) gives consecutive frames. stride=2 gives every other frame, etc. stride resets on `seek()` — the first frame after a seek is always collected.
 
+### error recovery
+
+by default, cuframe throws on any decode or demux error. for production deployments processing videos that may be corrupt or truncated, enable skip-and-continue mode:
+
+```python
+pipeline = (cuframe.Pipeline.builder()
+    .input("maybe_corrupt.mp4")
+    .resize(640, 640)
+    .normalize(cuframe.YOLO_NORM)
+    .batch(8)
+    .error_policy(cuframe.ErrorPolicy.SKIP)
+    .on_error(lambda info: print(f"skipped: {info.message}"))
+    .build())
+
+for batch in pipeline:
+    tensor = torch.from_dlpack(batch)
+    # process...
+
+print(f"total errors: {pipeline.error_count}")
+```
+
+- `ErrorPolicy.THROW` (default) — any demux/decode error raises an exception. backward compatible.
+- `ErrorPolicy.SKIP` — corrupt packets and frames are skipped. after a decode error, the NVDEC parser is reset and decoding resumes at the next keyframe (losing up to one GOP, typically 1-5 seconds).
+- `on_error(callback)` — optional. called for each skipped error with an `ErrorInfo` object containing a `message` string.
+- `error_count` — total number of errors encountered over the pipeline's lifetime. not reset by `seek()`.
+- if the error callback itself raises, the exception propagates to the caller. use this for "stop after N errors" policies.
+- CUDA device errors and resource exhaustion (pool/memory) remain fatal regardless of error policy.
+
 ### DLPack zero-copy
 
 `GpuFrameBatch` implements the DLPack protocol (`__dlpack__`, `__dlpack_device__`). the batch's GPU memory stays alive as long as any downstream tensor references it.
@@ -143,6 +171,7 @@ pipeline.crop_rois(0, rois, crops, cuframe.YOLO_NORM)
 - `pipeline.next()` returns `None` at end-of-stream (not `std::nullopt`)
 - `pipeline.seek(seconds)` works the same as C++ (method call, not property)
 - metadata via properties: `pipeline.source_width` (not `pipeline.source_width()`)
+- `pipeline.error_count` is a property (not `pipeline.error_count()`)
 - `crop_rois` accepts a list of `Rect` objects or `(x, y, w, h)` tuples
 - `make_norm_params(mean, std)` takes lists: `make_norm_params([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])`
 
@@ -206,6 +235,12 @@ auto pipeline = cuframe::Pipeline::builder()
 
 **`temporal_stride(int stride)`** — optional (default 1). collect every Nth decoded frame instead of consecutive frames. stride=1 gives every frame, stride=2 gives every other frame, etc. enables video understanding models that need temporally spaced frames (SlowFast, TimeSformer, etc.). the decoder still decodes every frame (hardware constraint), but skipped frames are released immediately and never preprocessed. throws `std::invalid_argument` if stride < 1.
 
+**`error_policy(ErrorPolicy policy)`** — optional (default `ErrorPolicy::THROW`). controls how demux/decode errors are handled.
+- `ErrorPolicy::THROW` — errors throw `std::runtime_error` (current behavior, backward compatible)
+- `ErrorPolicy::SKIP` — corrupt packets/frames are skipped, pipeline continues to next keyframe. after a decode error, the NVDEC parser is reset (losing frames in the DPB, typically up to one GOP). the demuxer continues feeding packets, and NVDEC resumes output at the next keyframe. gives up after 100 consecutive errors to prevent infinite loops on fully corrupt files.
+
+**`on_error(ErrorCallback callback)`** — optional. called for each error skipped in SKIP mode. receives an `ErrorInfo` struct with a `message` field. if the callback throws, the exception propagates to the caller — use this to implement "stop after N errors" or custom logging.
+
 **`build()`** — creates the pipeline. opens the video file, initializes the decoder, allocates all GPU buffers. throws `std::invalid_argument` if no input path is set, `std::runtime_error` if the file can't be opened or decoded.
 
 ### Pipeline
@@ -222,6 +257,7 @@ public:
     double fps() const;
     int64_t frame_count() const;
     const LetterboxInfo& letterbox_info() const;
+    size_t error_count() const;
     cudaStream_t stream() const;
     void crop_rois(int batch_idx, const Rect* rois, int num_rois,
                    GpuFrameBatch& output, const NormParams& norm, bool bgr = false);
@@ -250,6 +286,8 @@ the last batch may be partial: `(*batch)->count()` may be less than `(*batch)->b
 **`frame_count()`** — total number of frames in the source video, or -1 if the container doesn't store this information.
 
 **`letterbox_info()`** — returns the coordinate transform for mapping output pixel coordinates back to source frame coordinates. useful for reversing letterbox/resize/crop transforms on detection boxes.
+
+**`error_count()`** — total number of errors encountered in SKIP mode. cumulative over the pipeline's lifetime — not reset by `seek()`. returns 0 if no errors occurred or if using THROW mode.
 
 **`stream()`** — returns the pipeline's internal CUDA stream. useful for chaining GPU operations (e.g. running `roi_crop_batch` on the same stream) without a full device sync between pipeline output and downstream kernels. the returned stream is valid for the lifetime of the pipeline.
 
@@ -338,7 +376,25 @@ struct PipelineConfig {
     int batch_size = 1;
     int pool_size = 2;
     int temporal_stride = 1;
+    ErrorPolicy error_policy = ErrorPolicy::THROW;
+    ErrorCallback error_callback;
 };
+```
+
+### ErrorPolicy
+
+```cpp
+enum class ErrorPolicy { THROW, SKIP };
+```
+
+### ErrorInfo
+
+```cpp
+struct ErrorInfo {
+    std::string message;
+};
+
+using ErrorCallback = std::function<void(const ErrorInfo&)>;
 ```
 
 ### ResizeMode
@@ -671,6 +727,12 @@ all CUDA API calls are checked via `CUFRAME_CUDA_CHECK` (runtime API) and `CUFRA
 CUFRAME_CUDA_CHECK(cudaMalloc(&ptr, size));
 CUFRAME_CU_CHECK(cuCtxGetCurrent(&ctx));
 ```
+
+NVDEC callbacks (sequence, decode, display) never throw through NVDEC's C code. exceptions are caught inside callbacks, stored in `std::exception_ptr`, and re-thrown after `cuvidParseVideoData()` returns. this avoids undefined behavior from unwinding C++ exceptions through C stack frames.
+
+frame pool exhaustion throws `std::logic_error` (not `std::runtime_error`), so it is never caught by the pipeline's error recovery. pool exhaustion indicates a configuration issue, not stream corruption.
+
+for production use with potentially corrupt video, see `ErrorPolicy::SKIP` in the Pipeline builder docs above.
 
 ---
 
