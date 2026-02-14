@@ -73,6 +73,9 @@ struct Pipeline::Impl {
     // temporal stride state
     int stride_skip = 0;  // frames to skip before collecting next
 
+    // error recovery
+    size_t error_count = 0;
+
     void preprocess(const DecodedFrame& frame, float* out_buf,
                     float* rgb_buf, cudaStream_t stream) const {
         CUFRAME_NVTX_PUSH("cuframe::preprocess");
@@ -114,15 +117,48 @@ struct Pipeline::Impl {
         int target = std::min(config.batch_size * config.temporal_stride,
                               config.batch_size * 4);
         int have = static_cast<int>(pending.size()) - pending_idx;
+        int consecutive_errors = 0;
 
         while (have < target) {
-            if (!demuxer->read_packet(packet)) {
-                decoder->flush(pending);
+            bool have_packet;
+            try {
+                have_packet = demuxer->read_packet(packet);
+                consecutive_errors = 0;
+            } catch (const std::runtime_error& e) {
+                if (config.error_policy == ErrorPolicy::THROW) throw;
+                error_count++;
+                if (config.error_callback)
+                    config.error_callback(ErrorInfo{e.what()});
+                if (++consecutive_errors >= 100) break;
+                continue;
+            }
+
+            if (!have_packet) {
+                try {
+                    decoder->flush(pending);
+                } catch (const std::runtime_error& e) {
+                    if (config.error_policy == ErrorPolicy::THROW) throw;
+                    error_count++;
+                    if (config.error_callback)
+                        config.error_callback(ErrorInfo{e.what()});
+                }
                 flushed = true;
                 break;
             }
-            decoder->decode(packet, pending);
-            av_packet_unref(packet);
+
+            try {
+                decoder->decode(packet, pending);
+                av_packet_unref(packet);
+                consecutive_errors = 0;
+            } catch (const std::runtime_error& e) {
+                av_packet_unref(packet);
+                if (config.error_policy == ErrorPolicy::THROW) throw;
+                error_count++;
+                if (config.error_callback)
+                    config.error_callback(ErrorInfo{e.what()});
+                decoder->reset();
+                if (++consecutive_errors >= 100) break;
+            }
             have = static_cast<int>(pending.size()) - pending_idx;
         }
         CUFRAME_NVTX_POP();
@@ -158,6 +194,7 @@ double Pipeline::fps() const { return impl_->demuxer->video_info().fps; }
 int64_t Pipeline::frame_count() const { return impl_->demuxer->video_info().num_frames; }
 const LetterboxInfo& Pipeline::letterbox_info() const { return impl_->letterbox; }
 cudaStream_t Pipeline::stream() const { return impl_->preprocess_stream; }
+size_t Pipeline::error_count() const { return impl_->error_count; }
 
 void Pipeline::seek(double seconds) {
     auto& s = *impl_;
@@ -310,19 +347,53 @@ std::optional<std::shared_ptr<GpuFrameBatch>> Pipeline::next() {
 
         // read packets and decode until we get at least one frame
         bool got_frames = false;
-        while (s.demuxer->read_packet(s.packet)) {
-            int before = static_cast<int>(s.pending.size());
-            s.decoder->decode(s.packet, s.pending);
-            av_packet_unref(s.packet);
-            if (static_cast<int>(s.pending.size()) > before) {
-                got_frames = true;
-                break;
+        bool demuxer_done = false;
+        int consecutive_errors = 0;
+        while (!demuxer_done) {
+            bool have_packet;
+            try {
+                have_packet = s.demuxer->read_packet(s.packet);
+                consecutive_errors = 0;
+            } catch (const std::runtime_error& e) {
+                if (s.config.error_policy == ErrorPolicy::THROW) throw;
+                s.error_count++;
+                if (s.config.error_callback)
+                    s.config.error_callback(ErrorInfo{e.what()});
+                if (++consecutive_errors >= 100) { demuxer_done = true; break; }
+                continue;
+            }
+            if (!have_packet) { demuxer_done = true; break; }
+
+            try {
+                int before = static_cast<int>(s.pending.size());
+                s.decoder->decode(s.packet, s.pending);
+                av_packet_unref(s.packet);
+                consecutive_errors = 0;
+                if (static_cast<int>(s.pending.size()) > before) {
+                    got_frames = true;
+                    break;
+                }
+            } catch (const std::runtime_error& e) {
+                av_packet_unref(s.packet);
+                if (s.config.error_policy == ErrorPolicy::THROW) throw;
+                s.error_count++;
+                if (s.config.error_callback)
+                    s.config.error_callback(ErrorInfo{e.what()});
+                // rebuild parser to clear corrupt state (loses DPB, up to 1 GOP)
+                s.decoder->reset();
+                if (++consecutive_errors >= 100) { demuxer_done = true; break; }
             }
         }
 
-        if (!got_frames) {
-            // demuxer exhausted — flush decoder
-            s.decoder->flush(s.pending);
+        if (!got_frames && demuxer_done) {
+            try {
+                s.decoder->flush(s.pending);
+            } catch (const std::runtime_error& e) {
+                if (s.config.error_policy == ErrorPolicy::THROW) throw;
+                s.error_count++;
+                if (s.config.error_callback)
+                    s.config.error_callback(ErrorInfo{e.what()});
+            }
             s.flushed = true;
         }
     }
@@ -418,6 +489,16 @@ PipelineBuilder& PipelineBuilder::temporal_stride(int stride) {
     if (stride < 1)
         throw std::invalid_argument("pipeline: temporal_stride must be >= 1");
     config_.temporal_stride = stride;
+    return *this;
+}
+
+PipelineBuilder& PipelineBuilder::error_policy(ErrorPolicy policy) {
+    config_.error_policy = policy;
+    return *this;
+}
+
+PipelineBuilder& PipelineBuilder::on_error(ErrorCallback callback) {
+    config_.error_callback = std::move(callback);
     return *this;
 }
 

@@ -10,10 +10,19 @@
 #include <memory>
 #include <optional>
 #include <cstdint>
+#include <functional>
 
 namespace cuframe {
 
 enum class ResizeMode { STRETCH, LETTERBOX };
+
+enum class ErrorPolicy { THROW, SKIP };
+
+struct ErrorInfo {
+    std::string message;
+};
+
+using ErrorCallback = std::function<void(const ErrorInfo&)>;
 
 struct LetterboxInfo {
     float scale_x = 1.0f;   // source pixels per output pixel (horizontal)
@@ -77,6 +86,10 @@ struct PipelineConfig {
 
     // temporal stride (take every Nth frame, 1 = every frame)
     int temporal_stride = 1;
+
+    // error handling
+    ErrorPolicy error_policy = ErrorPolicy::THROW;
+    ErrorCallback error_callback;
 };
 
 class Pipeline;
@@ -96,6 +109,8 @@ public:
     PipelineBuilder& retain_decoded(bool retain = true);
     PipelineBuilder& device(int gpu_id);
     PipelineBuilder& temporal_stride(int stride);
+    PipelineBuilder& error_policy(ErrorPolicy policy);
+    PipelineBuilder& on_error(ErrorCallback callback);
 
     Pipeline build();
 
@@ -129,6 +144,10 @@ public:
 
     // transform info for mapping output coordinates back to source pixels
     const LetterboxInfo& letterbox_info() const;
+
+    // total errors encountered (skipped packets/frames).
+    // only increments with ErrorPolicy::SKIP. cumulative — not reset by seek().
+    size_t error_count() const;
 
     // internal CUDA stream used for preprocessing.
     // useful for chaining GPU ops (e.g. roi_crop_batch) without a full device sync.
