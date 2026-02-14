@@ -34,6 +34,45 @@ for batch in pipeline:
 
 the Python API mirrors the C++ API. see the C++ sections below for full documentation of each builder method and class.
 
+### seek
+
+jump to an arbitrary timestamp and resume decoding from there. useful for video understanding workloads (sparse frame sampling), random access, or replaying a section.
+
+```python
+pipeline.seek(1.5)  # jump to 1.5 seconds
+batch = pipeline.next()  # frames starting at/after 1.5s
+
+# reuse a pipeline after exhaustion
+for batch in pipeline:
+    pass  # drain
+pipeline.seek(0.0)  # back to start
+for batch in pipeline:
+    pass  # works again
+```
+
+seek always lands on the keyframe at or before the target timestamp. the pipeline then internally decodes forward from the keyframe and discards frames before the target, so the first frame returned by `next()` is at or just past the requested time. this "precise seek" is transparent to the caller.
+
+calling `seek()` resets end-of-stream state — a pipeline that returned `None` becomes usable again.
+
+### temporal stride
+
+sample every Nth frame instead of consecutive frames. enables video understanding models (SlowFast, TimeSformer, Video Swin, X3D) that need temporally spaced frames.
+
+```python
+pipeline = (cuframe.Pipeline.builder()
+    .input("video.mp4")
+    .resize(224, 224)
+    .normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+    .batch(16)
+    .temporal_stride(4)  # every 4th frame
+    .build())
+
+for clip in pipeline:
+    tensor = torch.from_dlpack(clip)  # [count, 3, 224, 224]
+```
+
+stride=1 (default) gives consecutive frames. stride=2 gives every other frame, etc. stride resets on `seek()` — the first frame after a seek is always collected.
+
 ### DLPack zero-copy
 
 `GpuFrameBatch` implements the DLPack protocol (`__dlpack__`, `__dlpack_device__`). the batch's GPU memory stays alive as long as any downstream tensor references it.
@@ -102,6 +141,7 @@ pipeline.crop_rois(0, rois, crops, cuframe.YOLO_NORM)
 
 - pipeline is iterable: `for batch in pipeline:` (vs C++ `while (auto batch = pipeline.next())`)
 - `pipeline.next()` returns `None` at end-of-stream (not `std::nullopt`)
+- `pipeline.seek(seconds)` works the same as C++ (method call, not property)
 - metadata via properties: `pipeline.source_width` (not `pipeline.source_width()`)
 - `crop_rois` accepts a list of `Rect` objects or `(x, y, w, h)` tuples
 - `make_norm_params(mean, std)` takes lists: `make_norm_params([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])`
@@ -164,6 +204,8 @@ auto pipeline = cuframe::Pipeline::builder()
 
 **`device(int gpu_id)`** — optional (default 0). select which GPU to run on. all decode, preprocessing, and output buffers are allocated on this device. for multi-GPU setups, create one pipeline per GPU. invalid device IDs throw `std::runtime_error` at build time.
 
+**`temporal_stride(int stride)`** — optional (default 1). collect every Nth decoded frame instead of consecutive frames. stride=1 gives every frame, stride=2 gives every other frame, etc. enables video understanding models that need temporally spaced frames (SlowFast, TimeSformer, etc.). the decoder still decodes every frame (hardware constraint), but skipped frames are released immediately and never preprocessed. throws `std::invalid_argument` if stride < 1.
+
 **`build()`** — creates the pipeline. opens the video file, initializes the decoder, allocates all GPU buffers. throws `std::invalid_argument` if no input path is set, `std::runtime_error` if the file can't be opened or decoded.
 
 ### Pipeline
@@ -173,6 +215,7 @@ class Pipeline {
 public:
     static PipelineBuilder builder();
     std::optional<std::shared_ptr<GpuFrameBatch>> next();
+    void seek(double seconds);
     const PipelineConfig& config() const;
     int source_width() const;
     int source_height() const;
@@ -195,6 +238,8 @@ the returned `shared_ptr<GpuFrameBatch>` has a custom deleter that returns the b
 - if all pool slots are occupied, `next()` blocks until a batch is released (backpressure)
 
 the last batch may be partial: `(*batch)->count()` may be less than `(*batch)->batch_size()`.
+
+**`seek(double seconds)`** — jump to the given timestamp. the next `next()` call returns frames starting at or after this position. seeks to the nearest keyframe at or before the target and discards intermediate frames internally (precise seek). resets end-of-stream state — a pipeline that returned `nullopt` becomes usable again after seeking. also resets temporal stride state so the first frame after a seek is always collected. thread-unsafe — don't call during `next()`.
 
 **`config()`** — returns the resolved pipeline configuration.
 
@@ -292,6 +337,7 @@ struct PipelineConfig {
     int device_id = 0;
     int batch_size = 1;
     int pool_size = 2;
+    int temporal_stride = 1;
 };
 ```
 

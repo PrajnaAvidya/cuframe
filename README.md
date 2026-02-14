@@ -77,6 +77,43 @@ while (auto batch = pipeline.next()) {
 }
 ```
 
+### seek + temporal stride
+
+```cpp
+// video understanding: 16 frames sampled every 4th frame
+auto pipeline = cuframe::Pipeline::builder()
+    .input("video.mp4")
+    .resize(224, 224)
+    .normalize({0.485f, 0.456f, 0.406f}, {0.229f, 0.224f, 0.225f})
+    .batch(16)
+    .temporal_stride(4)
+    .build();
+
+while (auto clip = pipeline.next()) {
+    // each batch spans 16*4 = 64 decoded frames
+}
+
+// random access
+pipeline.seek(5.0);  // jump to 5 seconds
+auto batch = pipeline.next();
+```
+
+```python
+# same in python
+pipeline = (cuframe.Pipeline.builder()
+    .input("video.mp4")
+    .resize(224, 224)
+    .normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+    .batch(16)
+    .temporal_stride(4)
+    .build())
+
+for clip in pipeline:
+    tensor = torch.from_dlpack(clip)
+
+pipeline.seek(5.0)
+```
+
 ## two-stage pipeline (detect + classify)
 
 for pipelines that need to crop regions from the original frame after first-stage inference (e.g., detect objects then classify each one), use `retain_decoded(true)` to keep the raw NV12 frames, then `roi_crop_batch` to extract and preprocess all detections in a single kernel launch.
@@ -142,6 +179,8 @@ this makes batch, height, and width all symbolic in the ONNX graph. the spatial 
 - **refcounted batch pool** — pre-allocated GPU batch buffers returned via `shared_ptr` with custom deleter, supports multiple consumers and backpressure
 - **ROI crop** — batch-extract regions from a decoded frame, resize + color convert + normalize each in a single kernel launch. enables two-stage pipelines (detect → crop → classify) without leaving the GPU
 - **retained decoded frames** — optionally keep raw NV12 frames alongside preprocessed batches for ROI cropping after first-stage inference. one D2D copy per frame (~0.01ms at 1080p)
+- **seek / random access** — jump to any timestamp and resume decoding. precise seek decodes from the nearest keyframe and discards frames before the target. pipelines can be reused after end-of-stream by seeking back
+- **temporal stride** — collect every Nth frame for video understanding models (SlowFast, TimeSformer, Video Swin, X3D). `.temporal_stride(4)` gives every 4th frame — skipped frames are released immediately, never preprocessed
 - **multi-stream prefetch** — overlaps decode of batch N+1 with preprocessing of batch N using separate CUDA streams
 - **NVTX profiling markers** — annotated ranges for decode, preprocess, batch, prefetch, and next. profile with Nsight Systems out of the box. opt-in: no-op if NVTX headers aren't installed
 - **zero framework dependency** — output is a raw device pointer with shape metadata, works with any CUDA-aware inference framework
@@ -263,11 +302,13 @@ cuframe/
 │   ├── basic_pipeline.cpp           # C++ pipeline example
 │   ├── classification_pipeline.cpp  # C++ classification example
 │   ├── two_stage_pipeline.cpp       # C++ two-stage example
+│   ├── temporal_pipeline.cpp        # C++ temporal stride + seek example
 │   ├── tensorrt_inference.cpp       # TensorRT integration (pseudocode)
 │   ├── onnxruntime_inference.cpp    # ONNX Runtime integration (pseudocode)
 │   └── python/
 │       ├── basic_pipeline.py        # Python pipeline + DLPack
 │       ├── two_stage_pipeline.py    # detect → crop → classify
+│       ├── temporal_pipeline.py     # temporal stride + seek
 │       └── ort_inference.py         # ORT io_binding (no torch needed)
 ├── docs/
 │   └── api.md                       # API reference (Python + C++)
