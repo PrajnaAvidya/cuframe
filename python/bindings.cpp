@@ -102,6 +102,15 @@ NB_MODULE(_cuframe, m) {
         .value("STRETCH", cuframe::ResizeMode::STRETCH)
         .value("LETTERBOX", cuframe::ResizeMode::LETTERBOX);
 
+    // --- ErrorPolicy enum ---
+    nb::enum_<cuframe::ErrorPolicy>(m, "ErrorPolicy")
+        .value("THROW", cuframe::ErrorPolicy::THROW)
+        .value("SKIP", cuframe::ErrorPolicy::SKIP);
+
+    // --- ErrorInfo ---
+    nb::class_<cuframe::ErrorInfo>(m, "ErrorInfo")
+        .def_ro("message", &cuframe::ErrorInfo::message);
+
     // --- NormParams ---
     nb::class_<cuframe::NormParams>(m, "NormParams")
         .def_prop_ro("scale", [](cuframe::NormParams& self) {
@@ -225,6 +234,18 @@ NB_MODULE(_cuframe, m) {
         .def("temporal_stride", &cuframe::PipelineBuilder::temporal_stride,
              "stride"_a,
              nb::rv_policy::reference)
+        .def("error_policy", &cuframe::PipelineBuilder::error_policy,
+             "policy"_a,
+             nb::rv_policy::reference)
+        .def("on_error", [](cuframe::PipelineBuilder& self, nb::object callback)
+                             -> cuframe::PipelineBuilder& {
+            self.on_error([callback = nb::object(callback)](const cuframe::ErrorInfo& info) {
+                nb::gil_scoped_acquire guard;
+                callback(nb::cast(info));
+            });
+            return self;
+        }, "callback"_a,
+           nb::rv_policy::reference)
         .def("build", [](cuframe::PipelineBuilder& self) {
             return self.build();
         });
@@ -272,7 +293,10 @@ NB_MODULE(_cuframe, m) {
                 }
             }
             self.crop_rois(batch_idx, rois, *output.ptr, norm, bgr);
-        }, "batch_idx"_a, "rois"_a, "output"_a, "norm"_a, "bgr"_a = false);
+        }, "batch_idx"_a, "rois"_a, "output"_a, "norm"_a, "bgr"_a = false)
+        .def_prop_ro("error_count", [](cuframe::Pipeline& self) {
+            return self.error_count();
+        });
 
     // --- norm helpers + constants ---
     m.def("make_norm_params", [](std::array<float, 3> mean, std::array<float, 3> std_dev) {
