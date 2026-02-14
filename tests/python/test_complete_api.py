@@ -188,3 +188,25 @@ def test_center_crop():
     batch = next(iter(pipeline))
     assert batch.height == 224
     assert batch.width == 224
+
+
+def test_temporal_stride_builder():
+    """temporal_stride builder method chains without error"""
+    pipeline = cuframe.Pipeline.builder() \
+        .input(VIDEO) \
+        .resize(320, 320) \
+        .temporal_stride(3) \
+        .batch(4) \
+        .build()
+
+    batch = next(iter(pipeline))
+    assert batch is not None
+
+
+def test_temporal_stride_invalid():
+    """stride=0 raises ValueError"""
+    with pytest.raises(Exception):
+        cuframe.Pipeline.builder() \
+            .input(VIDEO) \
+            .temporal_stride(0) \
+            .build()

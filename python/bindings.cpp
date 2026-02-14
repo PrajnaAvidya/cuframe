@@ -222,6 +222,9 @@ NB_MODULE(_cuframe, m) {
         .def("device", &cuframe::PipelineBuilder::device,
              "gpu_id"_a,
              nb::rv_policy::reference)
+        .def("temporal_stride", &cuframe::PipelineBuilder::temporal_stride,
+             "stride"_a,
+             nb::rv_policy::reference)
         .def("build", [](cuframe::PipelineBuilder& self) {
             return self.build();
         });
@@ -235,6 +238,7 @@ NB_MODULE(_cuframe, m) {
             if (!batch) return nb::none();
             return nb::cast(PyBatch{self_obj, *batch, self.config().device_id});
         })
+        .def("seek", &cuframe::Pipeline::seek, "seconds"_a)
         .def("__iter__", [](cuframe::Pipeline& self) -> cuframe::Pipeline& {
             return self;
         }, nb::rv_policy::reference)

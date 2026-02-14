@@ -153,3 +153,115 @@ def test_no_len():
 
     with pytest.raises(TypeError):
         len(pipeline)
+
+
+def test_seek_basic():
+    pipeline = cuframe.Pipeline.builder() \
+        .input(VIDEO) \
+        .resize(320, 320) \
+        .batch(8) \
+        .build()
+
+    pipeline.seek(0.0)
+    total = 0
+    for batch in pipeline:
+        total += batch.count
+    assert total == 90
+
+
+def test_seek_middle():
+    pipeline = cuframe.Pipeline.builder() \
+        .input(VIDEO) \
+        .resize(320, 320) \
+        .batch(8) \
+        .build()
+
+    pipeline.seek(1.5)
+    batch = pipeline.next()
+    assert batch is not None
+
+
+def test_seek_past_end():
+    pipeline = cuframe.Pipeline.builder() \
+        .input(VIDEO) \
+        .resize(320, 320) \
+        .batch(8) \
+        .build()
+
+    pipeline.seek(10.0)
+    total = 0
+    for batch in pipeline:
+        total += batch.count
+    assert total < 10
+
+
+def test_seek_after_eos():
+    pipeline = cuframe.Pipeline.builder() \
+        .input(VIDEO) \
+        .resize(320, 320) \
+        .batch(8) \
+        .build()
+
+    # exhaust — use next() to avoid holding batch refs via loop variable
+    while pipeline.next() is not None:
+        pass
+    assert pipeline.next() is None
+
+    # seek back
+    pipeline.seek(0.0)
+    total = 0
+    for batch in pipeline:
+        total += batch.count
+    assert total == 90
+
+
+def test_seek_resets_iterator():
+    """seek mid-iteration, for loop works from new position"""
+    pipeline = cuframe.Pipeline.builder() \
+        .input(VIDEO) \
+        .resize(320, 320) \
+        .batch(4) \
+        .build()
+
+    # consume a few — discard refs so pool isn't exhausted after seek
+    for i in range(3):
+        pipeline.next()
+
+    pipeline.seek(0.0)
+    total = 0
+    for batch in pipeline:
+        total += batch.count
+    assert total == 90
+
+
+def test_temporal_stride():
+    pipeline = cuframe.Pipeline.builder() \
+        .input(VIDEO) \
+        .resize(320, 320) \
+        .batch(4) \
+        .temporal_stride(2) \
+        .build()
+
+    total = 0
+    for batch in pipeline:
+        total += batch.count
+    # 90 frames, stride=2 → 45
+    assert total == 45
+
+
+def test_temporal_stride_with_dlpack():
+    torch = pytest.importorskip("torch")
+
+    pipeline = cuframe.Pipeline.builder() \
+        .input(VIDEO) \
+        .resize(224, 224) \
+        .normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]) \
+        .batch(4) \
+        .temporal_stride(2) \
+        .build()
+
+    batch = next(iter(pipeline))
+    tensor = torch.from_dlpack(batch)
+    assert tensor.shape == (batch.count, 3, 224, 224)
+    assert tensor.dtype == torch.float32
+    assert tensor.device.type == "cuda"
