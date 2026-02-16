@@ -182,6 +182,8 @@ this makes batch, height, and width all symbolic in the ONNX graph. the spatial 
 - **seek / random access** — jump to any timestamp and resume decoding. precise seek decodes from the nearest keyframe and discards frames before the target. pipelines can be reused after end-of-stream by seeking back
 - **temporal stride** — collect every Nth frame for video understanding models (SlowFast, TimeSformer, Video Swin, X3D). `.temporal_stride(4)` gives every 4th frame — skipped frames are released immediately, never preprocessed
 - **multi-stream prefetch** — overlaps decode of batch N+1 with preprocessing of batch N using separate CUDA streams
+- **event-based sync** — `Pipeline::next()` uses CUDA events for batch-ready signaling. `batch_event()` enables GPU→GPU cross-stream sync without CPU round-trips (e.g. inference stream waits on preprocessing completion via `cudaStreamWaitEvent`)
+- **profiling-driven kernel tuning** — all kernels annotated with `__launch_bounds__` and `__restrict__` based on ncu occupancy analysis. `tools/occupancy_report` queries `cudaOccupancyMaxPotentialBlockSize` for validation
 - **NVTX profiling markers** — annotated ranges for decode, preprocess, batch, prefetch, and next. profile with Nsight Systems out of the box. opt-in: no-op if NVTX headers aren't installed
 - **zero framework dependency** — output is a raw device pointer with shape metadata, works with any CUDA-aware inference framework
 

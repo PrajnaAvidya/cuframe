@@ -259,6 +259,7 @@ public:
     const LetterboxInfo& letterbox_info() const;
     size_t error_count() const;
     cudaStream_t stream() const;
+    cudaEvent_t batch_event() const;
     void crop_rois(int batch_idx, const Rect* rois, int num_rois,
                    GpuFrameBatch& output, const NormParams& norm, bool bgr = false);
     void crop_rois(int batch_idx, const std::vector<Rect>& rois,
@@ -290,6 +291,8 @@ the last batch may be partial: `(*batch)->count()` may be less than `(*batch)->b
 **`error_count()`** — total number of errors encountered in SKIP mode. cumulative over the pipeline's lifetime — not reset by `seek()`. returns 0 if no errors occurred or if using THROW mode.
 
 **`stream()`** — returns the pipeline's internal CUDA stream. useful for chaining GPU operations (e.g. running `roi_crop_batch` on the same stream) without a full device sync between pipeline output and downstream kernels. the returned stream is valid for the lifetime of the pipeline.
+
+**`batch_event()`** — returns the CUDA event recorded when the most recent `next()` batch is ready on GPU. use with `cudaStreamWaitEvent(your_stream, pipeline.batch_event())` to synchronize external streams against batch completion without a CPU round-trip. this enables GPU→GPU dependency chains — e.g., an inference stream can wait on the batch event and begin execution as soon as preprocessing finishes, without blocking the host.
 
 **`crop_rois(batch_idx, rois, num_rois, output, norm, bgr)`** — crop regions from a retained NV12 frame, resize + normalize into an output batch. convenience wrapper around `roi_crop_batch()` that handles frame lookup, color matrix selection, stream management, and count tracking automatically.
 
