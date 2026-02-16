@@ -54,6 +54,17 @@ seek always lands on the keyframe at or before the target timestamp. the pipelin
 
 calling `seek()` resets end-of-stream state — a pipeline that returned `None` becomes usable again.
 
+**pool backpressure warning:** if you drain a pipeline with `for _ in pipeline: pass` and then seek, the loop variable `_` still holds a batch reference until the next assignment, occupying a pool slot. with the default `pool_size=2`, the second loop's `next()` call can deadlock waiting for a slot that never frees. use the safe drain pattern instead:
+
+```python
+# safe drain before seek — temporaries release immediately
+while pipeline.next() is not None:
+    pass
+pipeline.seek(0.0)
+for batch in pipeline:
+    ...
+```
+
 ### temporal stride
 
 sample every Nth frame instead of consecutive frames. enables video understanding models (SlowFast, TimeSformer, Video Swin, X3D) that need temporally spaced frames.
@@ -81,7 +92,7 @@ by default, cuframe throws on any decode or demux error. for production deployme
 pipeline = (cuframe.Pipeline.builder()
     .input("maybe_corrupt.mp4")
     .resize(640, 640)
-    .normalize(cuframe.YOLO_NORM)
+    .normalize([0, 0, 0], [1, 1, 1])  # YOLO: pixel/255 (mean=0, std=1)
     .batch(8)
     .error_policy(cuframe.ErrorPolicy.SKIP)
     .on_error(lambda info: print(f"skipped: {info.message}"))
@@ -173,6 +184,7 @@ pipeline.crop_rois(0, rois, crops, cuframe.YOLO_NORM)
 - metadata via properties: `pipeline.source_width` (not `pipeline.source_width()`)
 - `pipeline.error_count` is a property (not `pipeline.error_count()`)
 - `crop_rois` accepts a list of `Rect` objects or `(x, y, w, h)` tuples
+- `.normalize(mean, std)` takes two lists: `.normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])`. do NOT pass `IMAGENET_NORM` or `YOLO_NORM` directly to the builder — those are `NormParams` constants for the kernel-level API, not builder arguments
 - `make_norm_params(mean, std)` takes lists: `make_norm_params([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])`
 
 ### constants
@@ -264,6 +276,8 @@ public:
                    GpuFrameBatch& output, const NormParams& norm, bool bgr = false);
     void crop_rois(int batch_idx, const std::vector<Rect>& rois,
                    GpuFrameBatch& output, const NormParams& norm, bool bgr = false);
+    const RetainedFrame& retained_frame(int i) const;
+    int retained_count() const;
 };
 ```
 
@@ -308,6 +322,10 @@ the last batch may be partial: `(*batch)->count()` may be less than `(*batch)->b
 
 also accepts `const std::vector<Rect>&` instead of pointer + count.
 
+**`retained_frame(int i)`** — returns a `RetainedFrame` descriptor for the `i`-th frame in the most recent batch. only valid when `retain_decoded(true)` was set. valid until the next `next()` call.
+
+**`retained_count()`** — number of retained frames available (matches the most recent batch's `count()`). returns 0 if `retain_decoded` is not enabled.
+
 ### LetterboxInfo
 
 ```cpp
@@ -339,10 +357,6 @@ float src_y = lb.to_source_y(det_y);
 float src_w = det_w * lb.scale_x;
 float src_h = det_h * lb.scale_y;
 ```
-
-**`retained_frame(int i)`** — returns a `RetainedFrame` descriptor for the `i`-th frame in the most recent batch. only valid when `retain_decoded(true)` was set. valid until the next `next()` call.
-
-**`retained_count()`** — number of retained frames available (matches the most recent batch's `count()`). returns 0 if `retain_decoded` is not enabled.
 
 ### RetainedFrame
 
@@ -574,6 +588,7 @@ cuframe::roi_crop_batch(nv12_ptr, src_w, src_h, src_pitch,
 batch crop: extract multiple regions from a single NV12 frame, resize each to `dst_w x dst_h`, color convert, and normalize in a single kernel launch. uses a 3D grid with `blockIdx.z` indexing ROIs for minimal launch overhead regardless of crop count.
 
 - `rois` — host-side array of `Rect` structs (uploaded to device internally via stream-ordered alloc)
+- `is_10bit` — pass `retained_frame(i).is_10bit` when using with a pipeline's retained frames. passing `false` on P016 (10-bit HEVC) content produces silently garbled output
 - output layout: `output[roi * 3 * dst_h * dst_w + c * dst_h * dst_w + y * dst_w + x]` — contiguous NCHW, same as `GpuFrameBatch`
 - no padding: ROI crops are always stretched to `dst_w x dst_h`
 - source coordinates are clamped to frame bounds (safe for ROIs at edges)

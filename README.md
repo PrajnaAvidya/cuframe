@@ -62,7 +62,7 @@ for batch in pipeline:
 ### C++
 
 ```cpp
-#include "cuframe/pipeline.h"
+#include <cuframe/cuframe.h>
 
 auto pipeline = cuframe::Pipeline::builder()
     .input("video.mp4")
@@ -119,9 +119,7 @@ pipeline.seek(5.0)
 for pipelines that need to crop regions from the original frame after first-stage inference (e.g., detect objects then classify each one), use `retain_decoded(true)` to keep the raw NV12 frames, then `roi_crop_batch` to extract and preprocess all detections in a single kernel launch.
 
 ```cpp
-#include "cuframe/pipeline.h"
-#include "cuframe/kernels/roi_crop.h"
-#include "cuframe/batch_pool.h"
+#include <cuframe/cuframe.h>
 
 auto pipeline = cuframe::Pipeline::builder()
     .input("video.mp4")
@@ -132,32 +130,37 @@ auto pipeline = cuframe::Pipeline::builder()
     .build();
 
 cuframe::BatchPool crop_pool(1, 64, 3, 224, 224);  // up to 64 crops
+auto& lb = pipeline.letterbox_info();
 
 while (auto batch = pipeline.next()) {
     auto boxes = run_detector((*batch)->data());
 
-    auto& frame = pipeline.retained_frame(0);
-    auto crops = crop_pool.acquire();
-
+    // map detector output coords back to source pixels (undo letterbox)
     std::vector<cuframe::Rect> rois;
     for (auto& b : boxes)
-        rois.push_back({b.x, b.y, b.w, b.h});
+        rois.push_back({(int)lb.to_source_x(b.x), (int)lb.to_source_y(b.y),
+                        (int)(b.w * lb.scale_x), (int)(b.h * lb.scale_y)});
 
-    // crop + resize + color convert + normalize all ROIs in one kernel
-    cuframe::roi_crop_batch(
-        frame.data, frame.width, frame.height, frame.pitch,
-        rois.data(), rois.size(),
-        crops->data(), 224, 224,
-        pipeline.config().color_matrix,
-        cuframe::make_norm_params({0,0,0}, {1,1,1}),
-        false);
-    crops->set_count(rois.size());
+    // crop + resize + color convert + normalize all ROIs in one kernel launch
+    auto crops = crop_pool.acquire();
+    pipeline.crop_rois(0, rois, *crops, cuframe::IMAGENET_NORM);
 
     auto labels = run_classifier(crops->data(), rois.size());
 }
 ```
 
-the color matrix is read from `pipeline.config().color_matrix` so the ROI crops use the same BT.601/BT.709 auto-selection as the main pipeline. see [docs/api.md](docs/api.md) for the full `roi_crop_batch` API reference.
+```python
+# Python — tuples instead of Rect objects
+lb = pipeline.letterbox_info
+crops = crop_pool.acquire()
+pipeline.crop_rois(0,
+    [(int(lb.to_source_x(b.x)), int(lb.to_source_y(b.y)),
+      int(b.w * lb.scale_x), int(b.h * lb.scale_y)) for b in boxes],
+    crops, cuframe.IMAGENET_NORM)
+labels = run_classifier(crops.data_ptr, len(boxes))
+```
+
+`pipeline.crop_rois()` handles frame lookup, color matrix, stream management, and count tracking automatically. `pipeline.letterbox_info()` maps detection coordinates from the letterboxed output space back to source pixels. see [docs/api.md](docs/api.md) and [examples/python/two_stage_pipeline.py](examples/python/two_stage_pipeline.py) for full examples.
 
 **ONNX model export note:** for batched ROI inference, the second-stage model needs a dynamic batch dimension. with Ultralytics YOLO, export with `dynamic=True`:
 
@@ -166,6 +169,46 @@ yolo export model=yolo26n-cls.pt format=onnx imgsz=224 dynamic=True
 ```
 
 this makes batch, height, and width all symbolic in the ONNX graph. the spatial dimensions can be read from the model's `imgsz` metadata at runtime; the batch dimension accepts any size. without `dynamic=True`, you'll need to run inference per-crop (one `session.Run()` per detection).
+
+## error recovery
+
+for production workloads processing videos that may be corrupt or truncated, enable skip-and-continue mode:
+
+```cpp
+auto pipeline = cuframe::Pipeline::builder()
+    .input("maybe_corrupt.mp4")
+    .resize(640, 640)
+    .normalize({0.485f, 0.456f, 0.406f}, {0.229f, 0.224f, 0.225f})
+    .batch(8)
+    .error_policy(cuframe::ErrorPolicy::SKIP)
+    .on_error([](const cuframe::ErrorInfo& e) {
+        fprintf(stderr, "skipped: %s\n", e.message.c_str());
+    })
+    .build();
+
+while (auto batch = pipeline.next()) {
+    // (*batch)->data() — process normally, corrupt frames already skipped
+}
+printf("total errors: %zu\n", pipeline.error_count());
+```
+
+```python
+pipeline = (cuframe.Pipeline.builder()
+    .input("maybe_corrupt.mp4")
+    .resize(640, 640)
+    .normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+    .batch(8)
+    .error_policy(cuframe.ErrorPolicy.SKIP)
+    .on_error(lambda e: print(f"skipped: {e.message}"))
+    .build())
+
+for batch in pipeline:
+    tensor = torch.from_dlpack(batch)
+
+print(f"total errors: {pipeline.error_count}")
+```
+
+`ErrorPolicy::THROW` (default) raises on any decode error. `ErrorPolicy::SKIP` silently skips corrupt packets and resets the decoder to the next keyframe — typically losing up to one GOP. CUDA device errors and resource exhaustion remain fatal regardless of policy.
 
 ## features
 
@@ -181,6 +224,7 @@ this makes batch, height, and width all symbolic in the ONNX graph. the spatial 
 - **retained decoded frames** — optionally keep raw NV12 frames alongside preprocessed batches for ROI cropping after first-stage inference. one D2D copy per frame (~0.01ms at 1080p)
 - **seek / random access** — jump to any timestamp and resume decoding. precise seek decodes from the nearest keyframe and discards frames before the target. pipelines can be reused after end-of-stream by seeking back
 - **temporal stride** — collect every Nth frame for video understanding models (SlowFast, TimeSformer, Video Swin, X3D). `.temporal_stride(4)` gives every 4th frame — skipped frames are released immediately, never preprocessed
+- **error recovery** — `ErrorPolicy::SKIP` with optional `on_error` callback for corrupt streams. skips bad packets, resets decoder to next keyframe. CUDA errors remain fatal. `error_count()` tracks cumulative skips
 - **multi-stream prefetch** — overlaps decode of batch N+1 with preprocessing of batch N using separate CUDA streams
 - **event-based sync** — `Pipeline::next()` uses CUDA events for batch-ready signaling. `batch_event()` enables GPU→GPU cross-stream sync without CPU round-trips (e.g. inference stream waits on preprocessing completion via `cudaStreamWaitEvent`)
 - **profiling-driven kernel tuning** — all kernels annotated with `__launch_bounds__` and `__restrict__` based on ncu occupancy analysis. `tools/occupancy_report` queries `cudaOccupancyMaxPotentialBlockSize` for validation
