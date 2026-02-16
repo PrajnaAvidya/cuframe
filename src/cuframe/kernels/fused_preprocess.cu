@@ -4,49 +4,54 @@
 
 namespace cuframe {
 
-__global__ void __launch_bounds__(256, 6) fused_nv12_to_tensor_kernel(
-    const uint8_t* __restrict__ nv12, float* __restrict__ rgb,
-    int src_w, int src_h, unsigned int src_pitch,
-    int dst_w, int dst_h,
-    int pad_left, int pad_top, int inner_w, int inner_h,
-    float scale_x, float scale_y, float pad_value,
-    float src_offset_x, float src_offset_y,
-    float3 coeff_r, float3 coeff_g, float3 coeff_b,
-    float norm_scale_r, float norm_bias_r,
-    float norm_scale_g, float norm_bias_g,
-    float norm_scale_b, float norm_bias_b,
-    bool bgr, bool is_10bit
-) {
+struct FusedKernelParams {
+    const uint8_t* __restrict__ nv12;
+    float* __restrict__ rgb;
+    int src_w, src_h;
+    unsigned int src_pitch;
+    int dst_w, dst_h;
+    int pad_left, pad_top, inner_w, inner_h;
+    float scale_x, scale_y, pad_value;
+    float src_offset_x, src_offset_y;
+    float3 coeff_r, coeff_g, coeff_b;
+    float norm_scale_r, norm_bias_r;
+    float norm_scale_g, norm_bias_g;
+    float norm_scale_b, norm_bias_b;
+    bool bgr, is_10bit;
+};
+
+__global__ void __launch_bounds__(256, 6)
+fused_nv12_to_tensor_kernel(FusedKernelParams p) {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
-    if (x >= dst_w || y >= dst_h) return;
+    if (x >= p.dst_w || y >= p.dst_h) return;
 
-    int plane = dst_w * dst_h;
-    int pixel = y * dst_w + x;
-    int r_plane = bgr ? 2 : 0;
-    int b_plane = bgr ? 0 : 2;
+    int plane = p.dst_w * p.dst_h;
+    int pixel = y * p.dst_w + x;
+    int r_plane = p.bgr ? 2 : 0;
+    int b_plane = p.bgr ? 0 : 2;
 
     // padding region — write normalized pad value per channel
-    int ix = x - pad_left;
-    int iy = y - pad_top;
-    if (ix < 0 || ix >= inner_w || iy < 0 || iy >= inner_h) {
-        rgb[r_plane * plane + pixel] = pad_value * norm_scale_r + norm_bias_r;
-        rgb[1       * plane + pixel] = pad_value * norm_scale_g + norm_bias_g;
-        rgb[b_plane * plane + pixel] = pad_value * norm_scale_b + norm_bias_b;
+    int ix = x - p.pad_left;
+    int iy = y - p.pad_top;
+    if (ix < 0 || ix >= p.inner_w || iy < 0 || iy >= p.inner_h) {
+        p.rgb[r_plane * plane + pixel] = p.pad_value * p.norm_scale_r + p.norm_bias_r;
+        p.rgb[1       * plane + pixel] = p.pad_value * p.norm_scale_g + p.norm_bias_g;
+        p.rgb[b_plane * plane + pixel] = p.pad_value * p.norm_scale_b + p.norm_bias_b;
         return;
     }
 
     // map to source coordinates (pixel center alignment + crop offset)
-    float src_xf = (ix + 0.5f) * scale_x - 0.5f + src_offset_x;
-    float src_yf = (iy + 0.5f) * scale_y - 0.5f + src_offset_y;
+    float src_xf = (ix + 0.5f) * p.scale_x - 0.5f + p.src_offset_x;
+    float src_yf = (iy + 0.5f) * p.scale_y - 0.5f + p.src_offset_y;
 
-    float3 rgb_val = nv12_bilinear_sample(nv12, src_xf, src_yf,
-        src_w, src_h, src_pitch, is_10bit, coeff_r, coeff_g, coeff_b);
+    float3 rgb_val = nv12_bilinear_sample(p.nv12, src_xf, src_yf,
+        p.src_w, p.src_h, p.src_pitch, p.is_10bit, p.coeff_r, p.coeff_g, p.coeff_b);
 
     // normalize and write planar
-    rgb[r_plane * plane + pixel] = rgb_val.x * norm_scale_r + norm_bias_r;
-    rgb[1       * plane + pixel] = rgb_val.y * norm_scale_g + norm_bias_g;
-    rgb[b_plane * plane + pixel] = rgb_val.z * norm_scale_b + norm_bias_b;
+    p.rgb[r_plane * plane + pixel] = rgb_val.x * p.norm_scale_r + p.norm_bias_r;
+    p.rgb[1       * plane + pixel] = rgb_val.y * p.norm_scale_g + p.norm_bias_g;
+    p.rgb[b_plane * plane + pixel] = rgb_val.z * p.norm_scale_b + p.norm_bias_b;
 }
 
 void fused_nv12_to_tensor(
@@ -55,24 +60,26 @@ void fused_nv12_to_tensor(
     const ResizeParams& r, const ColorMatrix& c, const NormParams& n,
     bool bgr, bool is_10bit, cudaStream_t stream
 ) {
+    FusedKernelParams p{};
+    p.nv12 = nv12_ptr;  p.rgb = rgb_ptr;
+    p.src_w = src_w;  p.src_h = src_h;  p.src_pitch = src_pitch;
+    p.dst_w = r.dst_w;  p.dst_h = r.dst_h;
+    p.pad_left = r.pad_left;  p.pad_top = r.pad_top;
+    p.inner_w = r.inner_w;  p.inner_h = r.inner_h;
+    p.scale_x = r.scale_x;  p.scale_y = r.scale_y;  p.pad_value = r.pad_value;
+    p.src_offset_x = r.src_offset_x;  p.src_offset_y = r.src_offset_y;
+    p.coeff_r = c.r;  p.coeff_g = c.g;  p.coeff_b = c.b;
+    p.norm_scale_r = n.scale[0];  p.norm_bias_r = n.bias[0];
+    p.norm_scale_g = n.scale[1];  p.norm_bias_g = n.bias[1];
+    p.norm_scale_b = n.scale[2];  p.norm_bias_b = n.bias[2];
+    p.bgr = bgr;  p.is_10bit = is_10bit;
+
     dim3 block(32, 8);
     dim3 grid(
-        (r.dst_w + block.x - 1) / block.x,
-        (r.dst_h + block.y - 1) / block.y
+        (p.dst_w + block.x - 1) / block.x,
+        (p.dst_h + block.y - 1) / block.y
     );
-    fused_nv12_to_tensor_kernel<<<grid, block, 0, stream>>>(
-        nv12_ptr, rgb_ptr,
-        src_w, src_h, src_pitch,
-        r.dst_w, r.dst_h,
-        r.pad_left, r.pad_top, r.inner_w, r.inner_h,
-        r.scale_x, r.scale_y, r.pad_value,
-        r.src_offset_x, r.src_offset_y,
-        c.r, c.g, c.b,
-        n.scale[0], n.bias[0],
-        n.scale[1], n.bias[1],
-        n.scale[2], n.bias[2],
-        bgr, is_10bit
-    );
+    fused_nv12_to_tensor_kernel<<<grid, block, 0, stream>>>(p);
     CUFRAME_CUDA_CHECK(cudaGetLastError());
 }
 
