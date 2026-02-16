@@ -42,4 +42,6 @@ void resize_bilinear(
     cudaStream_t stream = nullptr
 );
 
+void resize_query_occupancy(int* min_grid, int* block_size);
+
 } // namespace cuframe

@@ -28,7 +28,7 @@ static NormParams make_yolo_norm() {
 
 const NormParams YOLO_NORM = make_yolo_norm();
 
-__global__ void normalize_kernel(
+__global__ void __launch_bounds__(256, 6) normalize_kernel(
     const float* src, float* dst,
     int width, int height,
     float scale_r, float bias_r,
@@ -66,6 +66,11 @@ void normalize(
         params.scale[2], params.bias[2]
     );
     CUFRAME_CUDA_CHECK(cudaGetLastError());
+}
+
+void normalize_query_occupancy(int* min_grid, int* block_size) {
+    cudaOccupancyMaxPotentialBlockSize(min_grid, block_size,
+        normalize_kernel, 0, 0);
 }
 
 } // namespace cuframe

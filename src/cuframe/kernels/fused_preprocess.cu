@@ -4,7 +4,7 @@
 
 namespace cuframe {
 
-__global__ void fused_nv12_to_tensor_kernel(
+__global__ void __launch_bounds__(256, 6) fused_nv12_to_tensor_kernel(
     const uint8_t* nv12, float* rgb,
     int src_w, int src_h, unsigned int src_pitch,
     int dst_w, int dst_h,
@@ -74,6 +74,11 @@ void fused_nv12_to_tensor(
         bgr, is_10bit
     );
     CUFRAME_CUDA_CHECK(cudaGetLastError());
+}
+
+void fused_preprocess_query_occupancy(int* min_grid, int* block_size) {
+    cudaOccupancyMaxPotentialBlockSize(min_grid, block_size,
+        fused_nv12_to_tensor_kernel, 0, 0);
 }
 
 } // namespace cuframe

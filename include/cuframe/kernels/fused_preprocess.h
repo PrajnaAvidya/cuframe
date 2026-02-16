@@ -22,4 +22,6 @@ void fused_nv12_to_tensor(
     cudaStream_t stream = nullptr
 );
 
+void fused_preprocess_query_occupancy(int* min_grid, int* block_size);
+
 } // namespace cuframe

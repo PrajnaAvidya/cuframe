@@ -29,4 +29,6 @@ void normalize(
     cudaStream_t stream = nullptr
 );
 
+void normalize_query_occupancy(int* min_grid, int* block_size);
+
 } // namespace cuframe

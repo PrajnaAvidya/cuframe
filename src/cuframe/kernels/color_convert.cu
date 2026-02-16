@@ -15,7 +15,7 @@ const ColorMatrix BT709 = {
     {1.0f,  1.8556f,    0.0f   }
 };
 
-__global__ void nv12_to_rgb_planar_kernel(
+__global__ void __launch_bounds__(256, 6) nv12_to_rgb_planar_kernel(
     const uint8_t* nv12, float* rgb,
     int width, int height, unsigned int pitch,
     float3 coeff_r, float3 coeff_g, float3 coeff_b,
@@ -69,6 +69,11 @@ void nv12_to_rgb_planar(
         bgr, is_10bit
     );
     CUFRAME_CUDA_CHECK(cudaGetLastError());
+}
+
+void nv12_to_rgb_query_occupancy(int* min_grid, int* block_size) {
+    cudaOccupancyMaxPotentialBlockSize(min_grid, block_size,
+        nv12_to_rgb_planar_kernel, 0, 0);
 }
 
 } // namespace cuframe

@@ -78,7 +78,7 @@ ResizeParams make_center_crop_params(int src_w, int src_h,
     return p;
 }
 
-__global__ void resize_bilinear_kernel(
+__global__ void __launch_bounds__(256, 6) resize_bilinear_kernel(
     const float* src, float* dst,
     int src_w, int src_h, int dst_w, int dst_h,
     int pad_left, int pad_top, int inner_w, int inner_h,
@@ -144,6 +144,11 @@ void resize_bilinear(
         p.src_offset_x, p.src_offset_y
     );
     CUFRAME_CUDA_CHECK(cudaGetLastError());
+}
+
+void resize_query_occupancy(int* min_grid, int* block_size) {
+    cudaOccupancyMaxPotentialBlockSize(min_grid, block_size,
+        resize_bilinear_kernel, 0, 0);
 }
 
 } // namespace cuframe

@@ -31,4 +31,6 @@ void nv12_to_rgb_planar(
     cudaStream_t stream = nullptr
 );
 
+void nv12_to_rgb_query_occupancy(int* min_grid, int* block_size);
+
 } // namespace cuframe
