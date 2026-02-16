@@ -54,6 +54,7 @@ void batch_frames(
             stream
         ));
     }
+    CUFRAME_CUDA_CHECK(cudaGetLastError());
     CUFRAME_NVTX_POP();
 }
 
