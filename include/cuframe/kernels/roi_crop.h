@@ -26,6 +26,7 @@ void roi_crop_batch(
     const ColorMatrix& color,
     const NormParams& norm,
     bool bgr = false,
+    bool is_10bit = false,
     cudaStream_t stream = nullptr
 );
 

@@ -221,6 +221,10 @@ int Decoder::on_display(CUVIDPARSERDISPINFO* disp) {
         cp.Height = chroma_height;
         CUFRAME_CU_CHECK(cuMemcpy2DAsync(&cp, stream_));
 
+        // cuvidUnmapVideoFrame requires the copy to be complete before returning
+        // the surface to NVDEC's pool. this serializes decode+copy per frame.
+        // a deferred-unmap approach (record event, unmap when frame consumed)
+        // would allow overlapping copies but requires FramePool lifecycle changes.
         CUFRAME_CU_CHECK(cuStreamSynchronize(stream_));
         CUFRAME_CU_CHECK(cuvidUnmapVideoFrame(decoder_, src_ptr));
 

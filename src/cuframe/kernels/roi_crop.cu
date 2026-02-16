@@ -13,7 +13,7 @@ __global__ void roi_crop_batch_kernel(
     float norm_scale_r, float norm_bias_r,
     float norm_scale_g, float norm_bias_g,
     float norm_scale_b, float norm_bias_b,
-    bool bgr
+    bool bgr, bool is_10bit
 ) {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
@@ -29,7 +29,7 @@ __global__ void roi_crop_batch_kernel(
     float src_yf = (y + 0.5f) * scale_y - 0.5f + roi.y;
 
     float3 rgb_val = nv12_bilinear_sample(nv12, src_xf, src_yf,
-        src_w, src_h, src_pitch, false, coeff_r, coeff_g, coeff_b);
+        src_w, src_h, src_pitch, is_10bit, coeff_r, coeff_g, coeff_b);
 
     // write to roi's slot in output batch
     int plane = dst_w * dst_h;
@@ -50,7 +50,7 @@ void roi_crop_batch(
     float* output,
     int dst_w, int dst_h,
     const ColorMatrix& color, const NormParams& norm,
-    bool bgr, cudaStream_t stream
+    bool bgr, bool is_10bit, cudaStream_t stream
 ) {
     if (num_rois == 0) return;
 
@@ -74,7 +74,7 @@ void roi_crop_batch(
         norm.scale[0], norm.bias[0],
         norm.scale[1], norm.bias[1],
         norm.scale[2], norm.bias[2],
-        bgr
+        bgr, is_10bit
     );
     CUFRAME_CUDA_CHECK(cudaGetLastError());
     CUFRAME_CUDA_CHECK(cudaFreeAsync(d_rois, stream));

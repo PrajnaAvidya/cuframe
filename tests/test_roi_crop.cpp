@@ -283,6 +283,76 @@ TEST_F(RoiCropTest, BGROutput) {
 }
 
 // ============================================================================
+// 10-bit ROI crop matches fused kernel
+// ============================================================================
+
+static const char* TEST_HEVC_10BIT = "tests/data/test_hevc_10bit.mp4";
+
+TEST(RoiCrop10bit, MatchesFused) {
+    if (!std::filesystem::exists(TEST_HEVC_10BIT))
+        GTEST_SKIP() << "10-bit test video not found";
+
+    cuframe::Demuxer demuxer(TEST_HEVC_10BIT);
+    cuframe::Decoder decoder(demuxer.video_info(), 10);
+
+    std::vector<cuframe::DecodedFrame> frames;
+    AVPacket* pkt = av_packet_alloc();
+    while (demuxer.read_packet(pkt)) {
+        decoder.decode(pkt, frames);
+        av_packet_unref(pkt);
+        if (!frames.empty()) break;
+    }
+    if (frames.empty()) decoder.flush(frames);
+    av_packet_free(&pkt);
+    ASSERT_FALSE(frames.empty());
+    ASSERT_GT(frames[0].bit_depth, 8) << "expected 10-bit content";
+
+    auto& f = frames[0];
+    auto* nv12 = static_cast<const uint8_t*>(f.buffer->data());
+    int w = f.width, h = f.height;
+    unsigned int pitch = f.pitch;
+
+    const int dst_w = 128, dst_h = 128;
+    size_t out_bytes = 3ULL * dst_w * dst_h * sizeof(float);
+
+    // fused kernel path (10-bit)
+    auto params = cuframe::make_resize_params(w, h, dst_w, dst_h);
+    float* fused_d = nullptr;
+    CUFRAME_CUDA_CHECK(cudaMalloc(&fused_d, out_bytes));
+    cuframe::fused_nv12_to_tensor(nv12, fused_d, w, h, pitch,
+        params, cuframe::BT709, cuframe::IMAGENET_NORM, false, true);
+    CUFRAME_CUDA_CHECK(cudaDeviceSynchronize());
+
+    // ROI crop path (10-bit) — full frame as single ROI
+    cuframe::Rect roi{0, 0, w, h};
+    float* crop_d = nullptr;
+    CUFRAME_CUDA_CHECK(cudaMalloc(&crop_d, out_bytes));
+    cuframe::roi_crop_batch(nv12, w, h, pitch,
+        &roi, 1, crop_d, dst_w, dst_h,
+        cuframe::BT709, cuframe::IMAGENET_NORM, false, true);
+    CUFRAME_CUDA_CHECK(cudaDeviceSynchronize());
+
+    // compare
+    size_t n = 3 * dst_w * dst_h;
+    std::vector<float> fused_h(n), crop_h(n);
+    CUFRAME_CUDA_CHECK(cudaMemcpy(fused_h.data(), fused_d, out_bytes, cudaMemcpyDeviceToHost));
+    CUFRAME_CUDA_CHECK(cudaMemcpy(crop_h.data(), crop_d, out_bytes, cudaMemcpyDeviceToHost));
+
+    int mismatch = 0;
+    float max_diff = 0.0f;
+    for (size_t i = 0; i < n; ++i) {
+        float diff = std::abs(fused_h[i] - crop_h[i]);
+        if (diff > max_diff) max_diff = diff;
+        if (diff > 1e-3f) ++mismatch;
+    }
+    EXPECT_EQ(mismatch, 0)
+        << mismatch << " mismatches out of " << n << ", max diff = " << max_diff;
+
+    cudaFree(fused_d);
+    cudaFree(crop_d);
+}
+
+// ============================================================================
 // two-stage integration: pipeline + retain + roi_crop_batch
 // ============================================================================
 

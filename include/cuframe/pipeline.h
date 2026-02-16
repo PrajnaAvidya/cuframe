@@ -44,6 +44,7 @@ struct RetainedFrame {
     int width = 0;
     int height = 0;
     unsigned int pitch = 0;
+    bool is_10bit = false;  // P016 (10-bit) vs NV12 (8-bit)
 };
 
 struct PipelineConfig {

@@ -351,6 +351,7 @@ struct RetainedFrame {
     const uint8_t* data;    // NV12 data on device
     int width, height;
     unsigned int pitch;     // row stride in bytes
+    bool is_10bit;          // P016 (10-bit) vs NV12 (8-bit)
 };
 ```
 
@@ -567,7 +568,7 @@ the pipeline uses this automatically when both resize and normalize are configur
 cuframe::Rect rois[] = {{10, 10, 100, 80}, {200, 50, 60, 120}};
 cuframe::roi_crop_batch(nv12_ptr, src_w, src_h, src_pitch,
     rois, 2, output_ptr, 224, 224,
-    cuframe::BT601, cuframe::IMAGENET_NORM, false, stream);
+    cuframe::BT601, cuframe::IMAGENET_NORM, false, is_10bit, stream);
 ```
 
 batch crop: extract multiple regions from a single NV12 frame, resize each to `dst_w x dst_h`, color convert, and normalize in a single kernel launch. uses a 3D grid with `blockIdx.z` indexing ROIs for minimal launch overhead regardless of crop count.

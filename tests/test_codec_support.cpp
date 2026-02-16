@@ -1,6 +1,7 @@
 #include "cuframe/demuxer.h"
 #include "cuframe/decoder.h"
 #include "cuframe/pipeline.h"
+#include "cuframe/batch_pool.h"
 #include "cuframe/cuda_utils.h"
 
 #include <gtest/gtest.h>
@@ -581,4 +582,50 @@ TEST(CodecSupport, HEVC_10bit_MatchesEightBit) {
     // stay well under half the [0, 255] range
     EXPECT_LT(max_diff, 50.0f)
         << "8-bit vs 10-bit RGB differ too much (max diff=" << max_diff << ")";
+}
+
+// 10-bit pipeline with retain_decoded + crop_rois
+TEST(CodecSupport, HEVC_10bit_CropRois) {
+    if (!file_exists(TEST_HEVC_10BIT))
+        GTEST_SKIP() << "10-bit test video not found";
+
+    auto pipeline = cuframe::Pipeline::builder()
+        .input(TEST_HEVC_10BIT)
+        .resize(320, 320, cuframe::ResizeMode::LETTERBOX)
+        .normalize({0.485f, 0.456f, 0.406f}, {0.229f, 0.224f, 0.225f})
+        .retain_decoded(true)
+        .batch(1)
+        .build();
+
+    auto batch = pipeline.next();
+    ASSERT_TRUE(batch.has_value());
+    EXPECT_EQ(pipeline.retained_count(), 1);
+
+    auto& frame = pipeline.retained_frame(0);
+    ASSERT_NE(frame.data, nullptr);
+    EXPECT_TRUE(frame.is_10bit) << "retained frame should be 10-bit";
+
+    // crop two regions
+    int crop_w = 64, crop_h = 64;
+    cuframe::BatchPool crop_pool(1, 4, 3, crop_h, crop_w);
+    auto crops = crop_pool.acquire();
+
+    std::vector<cuframe::Rect> rois = {
+        {10, 10, 100, 80},
+        {0, 0, frame.width / 2, frame.height / 2},
+    };
+    pipeline.crop_rois(0, rois, *crops, cuframe::IMAGENET_NORM);
+
+    EXPECT_EQ(crops->count(), 2);
+
+    size_t total = 2ULL * 3 * crop_h * crop_w;
+    std::vector<float> host(total);
+    CUFRAME_CUDA_CHECK(cudaMemcpy(host.data(), crops->data(),
+                                   total * sizeof(float), cudaMemcpyDeviceToHost));
+
+    for (size_t i = 0; i < total; i += 47) {
+        EXPECT_FALSE(std::isnan(host[i])) << "NaN at " << i;
+        EXPECT_GT(host[i], -5.0f) << "value too negative at " << i;
+        EXPECT_LT(host[i], 5.0f) << "value too large at " << i;
+    }
 }

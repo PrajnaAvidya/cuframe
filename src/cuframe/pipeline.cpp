@@ -249,7 +249,7 @@ void Pipeline::crop_rois(int batch_idx,
         rois, num_rois,
         output.data(), output.width(), output.height(),
         s.config.color_matrix, norm, bgr,
-        s.preprocess_stream);
+        frame.is_10bit, s.preprocess_stream);
 
     CUFRAME_CUDA_CHECK(cudaStreamSynchronize(s.preprocess_stream));
     output.set_count(num_rois);
@@ -329,7 +329,8 @@ std::optional<std::shared_ptr<GpuFrameBatch>> Pipeline::next() {
                     s.preprocess_stream));
                 s.retained_meta[collected] = {
                     s.retained_nv12[collected],
-                    frame.width, frame.height, frame.pitch
+                    frame.width, frame.height, frame.pitch,
+                    frame.bit_depth > 8
                 };
             }
 
