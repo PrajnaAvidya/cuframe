@@ -55,6 +55,39 @@ static BenchResult bench_pipeline(const std::string& path) {
 }
 
 // ============================================================================
+// pipeline API — GPU event timing (measures GPU work only, no CPU overhead)
+// ============================================================================
+static BenchResult bench_pipeline_gpu_timed(const std::string& path) {
+    auto pipeline = cuframe::Pipeline::builder()
+        .input(path)
+        .resize(DST_W, DST_H)
+        .normalize({0.485f, 0.456f, 0.406f}, {0.229f, 0.224f, 0.225f})
+        .batch(BATCH_SIZE)
+        .build();
+
+    cudaEvent_t start, stop;
+    CUFRAME_CUDA_CHECK(cudaEventCreate(&start));
+    CUFRAME_CUDA_CHECK(cudaEventCreate(&stop));
+
+    int total = 0;
+    CUFRAME_CUDA_CHECK(cudaEventRecord(start, pipeline.stream()));
+
+    while (auto batch = pipeline.next())
+        total += (*batch)->count();
+
+    CUFRAME_CUDA_CHECK(cudaEventRecord(stop, pipeline.stream()));
+    CUFRAME_CUDA_CHECK(cudaEventSynchronize(stop));
+
+    float gpu_ms = 0.0f;
+    CUFRAME_CUDA_CHECK(cudaEventElapsedTime(&gpu_ms, start, stop));
+
+    CUFRAME_CUDA_CHECK(cudaEventDestroy(start));
+    CUFRAME_CUDA_CHECK(cudaEventDestroy(stop));
+
+    return {total, static_cast<double>(gpu_ms), total / (gpu_ms / 1000.0)};
+}
+
+// ============================================================================
 // raw fused kernels (no pipeline abstraction)
 // ============================================================================
 static BenchResult bench_raw_fused(const std::string& path) {
@@ -198,9 +231,14 @@ int main(int argc, char** argv) {
     cudaFree(0);  // warm up gpu
 
     auto pipe = bench_pipeline(path);
-    printf("pipeline API (multi-stream prefetch):\n");
+    printf("pipeline API (multi-stream prefetch) [wall clock]:\n");
     printf("  %d frames in %.1fms  (%.0f fps)\n\n",
            pipe.frame_count, pipe.elapsed_ms, pipe.fps);
+
+    auto pipe_gpu = bench_pipeline_gpu_timed(path);
+    printf("pipeline API (multi-stream prefetch) [GPU events]:\n");
+    printf("  %d frames in %.1fms  (%.0f fps)\n\n",
+           pipe_gpu.frame_count, pipe_gpu.elapsed_ms, pipe_gpu.fps);
 
     auto raw = bench_raw_fused(path);
     printf("raw fused kernels (no pipeline):\n");
