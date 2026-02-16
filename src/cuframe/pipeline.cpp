@@ -312,16 +312,23 @@ std::optional<std::shared_ptr<GpuFrameBatch>> Pipeline::next() {
 
             // retain NV12 copy before releasing pool buffer
             if (s.config.retain_decoded) {
+                unsigned int luma_h = frame.height;
+                unsigned int chroma_h = (frame.height + 1) / 2;
+                size_t needed = frame.pitch * (luma_h + chroma_h);
+
                 if (!s.retained_allocated) {
-                    unsigned int luma_h = frame.height;
-                    unsigned int chroma_h = (frame.height + 1) / 2;
-                    s.retained_frame_bytes = frame.pitch * (luma_h + chroma_h);
+                    s.retained_frame_bytes = needed;
                     s.retained_nv12.resize(s.config.batch_size, nullptr);
                     for (int j = 0; j < s.config.batch_size; ++j)
                         CUFRAME_CUDA_CHECK(cudaMalloc(&s.retained_nv12[j],
                                                        s.retained_frame_bytes));
                     s.retained_meta.resize(s.config.batch_size);
                     s.retained_allocated = true;
+                } else if (needed != s.retained_frame_bytes) {
+                    throw std::runtime_error(
+                        "retain_decoded: mid-stream resolution change "
+                        "(frame needs " + std::to_string(needed) +
+                        " bytes, buffer is " + std::to_string(s.retained_frame_bytes) + ")");
                 }
                 CUFRAME_CUDA_CHECK(cudaMemcpyAsync(
                     s.retained_nv12[collected], frame.buffer->data(),
