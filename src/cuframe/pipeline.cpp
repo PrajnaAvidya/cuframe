@@ -38,8 +38,9 @@ struct Pipeline::Impl {
     bool use_fused = false;
     int out_w = 0, out_h = 0;
 
-    // stream
+    // stream + sync
     cudaStream_t preprocess_stream = nullptr;
+    cudaEvent_t batch_ready = nullptr;
 
     // intermediate GPU buffers (allocated once at build, reused per batch)
     std::vector<float*> rgb_bufs;   // only for separate path with resize
@@ -172,6 +173,7 @@ struct Pipeline::Impl {
         for (auto* p : retained_nv12) cudaFree(p);
         for (auto* p : rgb_bufs) cudaFree(p);
         for (auto* p : out_bufs) cudaFree(p);
+        if (batch_ready) cudaEventDestroy(batch_ready);
         if (preprocess_stream) cudaStreamDestroy(preprocess_stream);
         if (packet) av_packet_free(&packet);
     }
@@ -194,6 +196,7 @@ double Pipeline::fps() const { return impl_->demuxer->video_info().fps; }
 int64_t Pipeline::frame_count() const { return impl_->demuxer->video_info().num_frames; }
 const LetterboxInfo& Pipeline::letterbox_info() const { return impl_->letterbox; }
 cudaStream_t Pipeline::stream() const { return impl_->preprocess_stream; }
+cudaEvent_t Pipeline::batch_event() const { return impl_->batch_ready; }
 size_t Pipeline::error_count() const { return impl_->error_count; }
 
 void Pipeline::seek(double seconds) {
@@ -410,10 +413,15 @@ std::optional<std::shared_ptr<GpuFrameBatch>> Pipeline::next() {
         ptrs[i] = s.out_bufs[i];
     batch_frames(*batch, ptrs.data(), collected, s.preprocess_stream);
 
-    // pre-decode next batch while preprocess stream finishes on GPU
+    // record event when batch GPU work completes
+    CUFRAME_CUDA_CHECK(cudaEventRecord(s.batch_ready, s.preprocess_stream));
+
+    // pre-decode next batch (CPU-side) while GPU finishes current batch
     s.prefetch();
 
-    CUFRAME_CUDA_CHECK(cudaStreamSynchronize(s.preprocess_stream));
+    // wait for batch completion via event. more composable than stream sync —
+    // downstream streams can cudaStreamWaitEvent on batch_ready without full sync.
+    CUFRAME_CUDA_CHECK(cudaEventSynchronize(s.batch_ready));
     batch->set_count(collected);
     if (s.config.retain_decoded)
         s.retained_count_ = collected;
@@ -574,6 +582,9 @@ Pipeline PipelineBuilder::build() {
     cudaStream_t preprocess_stream;
     CUFRAME_CUDA_CHECK(cudaStreamCreate(&preprocess_stream));
 
+    cudaEvent_t batch_ready;
+    CUFRAME_CUDA_CHECK(cudaEventCreate(&batch_ready));
+
     // per-frame output buffers (preprocessed result before batching)
     size_t out_bytes = 3ULL * out_w * out_h * sizeof(float);
     std::vector<float*> out_bufs(config_.batch_size, nullptr);
@@ -603,6 +614,7 @@ Pipeline PipelineBuilder::build() {
     impl->out_w = out_w;
     impl->out_h = out_h;
     impl->preprocess_stream = preprocess_stream;
+    impl->batch_ready = batch_ready;
     impl->rgb_bufs = std::move(rgb_bufs);
     impl->out_bufs = std::move(out_bufs);
     impl->batch_pool = std::move(batch_pool);

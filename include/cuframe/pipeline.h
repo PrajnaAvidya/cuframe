@@ -154,6 +154,11 @@ public:
     // valid for the lifetime of the pipeline.
     cudaStream_t stream() const;
 
+    // event recorded when the most recent next() batch is ready on GPU.
+    // use with cudaStreamWaitEvent to synchronize external streams against
+    // batch completion without coupling to the pipeline's internal stream.
+    cudaEvent_t batch_event() const;
+
     // crop regions from retained NV12 frame, resize + normalize into output batch.
     // requires retain_decoded(true). batch_idx is the frame index in the most recent
     // next() result. uses pipeline's color matrix and stream. output.set_count()
