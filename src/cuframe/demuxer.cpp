@@ -92,11 +92,24 @@ bool Demuxer::read_packet(AVPacket* packet) {
         if (packet->stream_index == video_stream_idx_) {
             if (bsf_ctx_) {
                 // convert AVCC -> annex B
-                if (av_bsf_send_packet(bsf_ctx_, packet) < 0)
-                    throw std::runtime_error("av_bsf_send_packet failed");
+                int bsf_ret = av_bsf_send_packet(bsf_ctx_, packet);
                 av_packet_unref(packet);
-                if (av_bsf_receive_packet(bsf_ctx_, packet) < 0)
-                    throw std::runtime_error("av_bsf_receive_packet failed");
+                if (bsf_ret < 0) {
+                    char errbuf[AV_ERROR_MAX_STRING_SIZE];
+                    av_strerror(bsf_ret, errbuf, sizeof(errbuf));
+                    throw std::runtime_error(
+                        std::string("av_bsf_send_packet: ") + errbuf);
+                }
+
+                bsf_ret = av_bsf_receive_packet(bsf_ctx_, packet);
+                if (bsf_ret == AVERROR(EAGAIN))
+                    return read_packet(packet);
+                if (bsf_ret < 0) {
+                    char errbuf[AV_ERROR_MAX_STRING_SIZE];
+                    av_strerror(bsf_ret, errbuf, sizeof(errbuf));
+                    throw std::runtime_error(
+                        std::string("av_bsf_receive_packet: ") + errbuf);
+                }
             }
             return true;
         }
