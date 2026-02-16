@@ -79,7 +79,7 @@ ResizeParams make_center_crop_params(int src_w, int src_h,
 }
 
 __global__ void __launch_bounds__(256, 6) resize_bilinear_kernel(
-    const float* src, float* dst,
+    const float* __restrict__ src, float* __restrict__ dst,
     int src_w, int src_h, int dst_w, int dst_h,
     int pad_left, int pad_top, int inner_w, int inner_h,
     float scale_x, float scale_y, float pad_value,

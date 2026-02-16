@@ -5,7 +5,7 @@
 namespace cuframe {
 
 __global__ void __launch_bounds__(256, 6) fused_nv12_to_tensor_kernel(
-    const uint8_t* nv12, float* rgb,
+    const uint8_t* __restrict__ nv12, float* __restrict__ rgb,
     int src_w, int src_h, unsigned int src_pitch,
     int dst_w, int dst_h,
     int pad_left, int pad_top, int inner_w, int inner_h,

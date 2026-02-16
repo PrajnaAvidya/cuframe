@@ -28,8 +28,10 @@ static NormParams make_yolo_norm() {
 
 const NormParams YOLO_NORM = make_yolo_norm();
 
+// __restrict__ safe for in-place (src==dst): each thread touches exactly one
+// unique index, so no aliasing between read and write within the kernel.
 __global__ void __launch_bounds__(256, 6) normalize_kernel(
-    const float* src, float* dst,
+    const float* __restrict__ src, float* __restrict__ dst,
     int width, int height,
     float scale_r, float bias_r,
     float scale_g, float bias_g,

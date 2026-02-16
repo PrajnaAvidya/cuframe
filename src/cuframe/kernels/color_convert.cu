@@ -16,7 +16,7 @@ const ColorMatrix BT709 = {
 };
 
 __global__ void __launch_bounds__(256, 6) nv12_to_rgb_planar_kernel(
-    const uint8_t* nv12, float* rgb,
+    const uint8_t* __restrict__ nv12, float* __restrict__ rgb,
     int width, int height, unsigned int pitch,
     float3 coeff_r, float3 coeff_g, float3 coeff_b,
     bool bgr, bool is_10bit

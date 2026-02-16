@@ -5,9 +5,9 @@
 namespace cuframe {
 
 __global__ void roi_crop_batch_kernel(
-    const uint8_t* nv12, float* output,
+    const uint8_t* __restrict__ nv12, float* __restrict__ output,
     int src_w, int src_h, unsigned int src_pitch,
-    const Rect* rois, int num_rois,
+    const Rect* __restrict__ rois, int num_rois,
     int dst_w, int dst_h,
     float3 coeff_r, float3 coeff_g, float3 coeff_b,
     float norm_scale_r, float norm_bias_r,

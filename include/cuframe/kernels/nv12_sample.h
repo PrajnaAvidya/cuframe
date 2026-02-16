@@ -8,7 +8,7 @@ namespace cuframe {
 // is_10bit: P016 has 16-bit MSB-aligned samples, >> 8 maps to [0, 255].
 // branch is uniform (all threads same value) so zero divergence cost.
 __device__ inline float3 nv12_to_rgb(
-    const uint8_t* frame, int x, int y,
+    const uint8_t* __restrict__ frame, int x, int y,
     int src_h, unsigned int pitch, bool is_10bit,
     float3 coeff_r, float3 coeff_g, float3 coeff_b
 ) {
@@ -35,7 +35,7 @@ __device__ inline float3 nv12_to_rgb(
 
 // bilinear sample 4 NV12 points and interpolate to RGB
 __device__ inline float3 nv12_bilinear_sample(
-    const uint8_t* frame, float src_xf, float src_yf,
+    const uint8_t* __restrict__ frame, float src_xf, float src_yf,
     int src_w, int src_h, unsigned int pitch, bool is_10bit,
     float3 coeff_r, float3 coeff_g, float3 coeff_b
 ) {
