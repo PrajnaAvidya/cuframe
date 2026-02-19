@@ -463,6 +463,12 @@ PipelineBuilder& PipelineBuilder::normalize(std::array<float, 3> mean,
     return *this;
 }
 
+PipelineBuilder& PipelineBuilder::normalize(const NormParams& params) {
+    config_.has_normalize = true;
+    config_.norm = params;
+    return *this;
+}
+
 PipelineBuilder& PipelineBuilder::batch(int size) {
     config_.batch_size = size;
     return *this;

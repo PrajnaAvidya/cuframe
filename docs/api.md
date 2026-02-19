@@ -23,7 +23,7 @@ import torch
 pipeline = (cuframe.Pipeline.builder()
     .input("video.mp4")
     .resize(640, 640, cuframe.ResizeMode.LETTERBOX)
-    .normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+    .normalize(cuframe.IMAGENET_NORM)
     .batch(8)
     .build())
 
@@ -73,7 +73,7 @@ sample every Nth frame instead of consecutive frames. enables video understandin
 pipeline = (cuframe.Pipeline.builder()
     .input("video.mp4")
     .resize(224, 224)
-    .normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+    .normalize(cuframe.IMAGENET_NORM)
     .batch(16)
     .temporal_stride(4)  # every 4th frame
     .build())
@@ -92,7 +92,7 @@ by default, cuframe throws on any decode or demux error. for production deployme
 pipeline = (cuframe.Pipeline.builder()
     .input("maybe_corrupt.mp4")
     .resize(640, 640)
-    .normalize([0, 0, 0], [1, 1, 1])  # YOLO: pixel/255 (mean=0, std=1)
+    .normalize(cuframe.YOLO_NORM)
     .batch(8)
     .error_policy(cuframe.ErrorPolicy.SKIP)
     .on_error(lambda info: print(f"skipped: {info.message}"))
@@ -184,7 +184,8 @@ pipeline.crop_rois(0, rois, crops, cuframe.YOLO_NORM)
 - metadata via properties: `pipeline.source_width` (not `pipeline.source_width()`)
 - `pipeline.error_count` is a property (not `pipeline.error_count()`)
 - `crop_rois` accepts a list of `Rect` objects or `(x, y, w, h)` tuples
-- `.normalize(mean, std)` takes two lists: `.normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])`. do NOT pass `IMAGENET_NORM` or `YOLO_NORM` directly to the builder — those are `NormParams` constants for the kernel-level API, not builder arguments
+- `.normalize(mean, std)` takes two lists: `.normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])`
+- `.normalize(params)` accepts a `NormParams` constant directly: `.normalize(cuframe.IMAGENET_NORM)` or `.normalize(cuframe.YOLO_NORM)`
 - `make_norm_params(mean, std)` takes lists: `make_norm_params([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])`
 
 ### constants
@@ -208,7 +209,7 @@ the pipeline is the primary interface. it wraps decode, preprocessing, and batch
 auto pipeline = cuframe::Pipeline::builder()
     .input("video.mp4")                                              // required
     .resize(640, 640, cuframe::ResizeMode::LETTERBOX, 114.0f)        // optional
-    .normalize({0.485f, 0.456f, 0.406f}, {0.229f, 0.224f, 0.225f})   // optional
+    .normalize(cuframe::IMAGENET_NORM)                               // optional
     .batch(8)                                                        // optional (default 1)
     .pool_size(2)                                                    // optional (default 2)
     .color_matrix(cuframe::BT709)                                    // optional (auto-detected)
@@ -229,8 +230,9 @@ auto pipeline = cuframe::Pipeline::builder()
 - crop dimensions must not exceed the resized (or source) dimensions.
 - typical classification pipeline: `.resize(256, 256, ResizeMode::STRETCH).center_crop(224, 224).normalize(...)`
 
-**`normalize(std::array<float, 3> mean, std::array<float, 3> std)`** — optional. per-channel normalization. transforms pixel values from [0, 255] to `(pixel/255 - mean) / std`. typical values:
-- ImageNet: mean={0.485, 0.456, 0.406}, std={0.229, 0.224, 0.225}
+**`normalize(std::array<float, 3> mean, std::array<float, 3> std)`** — optional. per-channel normalization. transforms pixel values from [0, 255] to `(pixel/255 - mean) / std`.
+
+**`normalize(const NormParams& params)`** — overload accepting a pre-built constant. typical usage: `.normalize(cuframe::IMAGENET_NORM)` or `.normalize(cuframe::YOLO_NORM)`.
 - if omitted, output is in [0, 255] float32 range
 
 **`batch(int size)`** — optional (default 1). number of frames per batch. the last batch may have fewer frames (check `count()`).
@@ -606,23 +608,25 @@ struct Rect {
 auto pipeline = cuframe::Pipeline::builder()
     .input("video.mp4")
     .resize(640, 640, cuframe::ResizeMode::LETTERBOX)
-    .normalize({0.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 1.0f})
+    .normalize(cuframe::YOLO_NORM)
     .retain_decoded(true)
     .batch(1)
     .build();
 
 cuframe::BatchPool crop_pool(1, 64, 3, 224, 224);
-const auto& cfg = pipeline.config();
+const auto& lb = pipeline.letterbox_info();
 
 while (auto batch = pipeline.next()) {
     auto boxes = run_detector((*batch)->data(), 640, 640);
 
+    // map detector output coords back to source pixels (undo letterbox)
     std::vector<cuframe::Rect> rois;
     for (auto& b : boxes)
-        rois.push_back({b.x, b.y, b.w, b.h});
+        rois.push_back({(int)lb.to_source_x(b.x), (int)lb.to_source_y(b.y),
+                        (int)(b.w * lb.scale_x), (int)(b.h * lb.scale_y)});
 
     auto crops = crop_pool.acquire();
-    pipeline.crop_rois(0, rois, *crops, cfg.norm);
+    pipeline.crop_rois(0, rois, *crops, cuframe::IMAGENET_NORM);
 
     auto labels = run_classifier(crops->data(), rois.size());
 }

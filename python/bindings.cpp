@@ -210,8 +210,15 @@ NB_MODULE(_cuframe, m) {
              "mode"_a = cuframe::ResizeMode::LETTERBOX,
              "pad_value"_a = 114.0f,
              nb::rv_policy::reference)
-        .def("normalize", &cuframe::PipelineBuilder::normalize,
+        .def("normalize",
+             nb::overload_cast<std::array<float, 3>, std::array<float, 3>>(
+                 &cuframe::PipelineBuilder::normalize),
              "mean"_a, "std"_a,
+             nb::rv_policy::reference)
+        .def("normalize",
+             nb::overload_cast<const cuframe::NormParams&>(
+                 &cuframe::PipelineBuilder::normalize),
+             "params"_a,
              nb::rv_policy::reference)
         .def("center_crop", &cuframe::PipelineBuilder::center_crop,
              "width"_a, "height"_a,

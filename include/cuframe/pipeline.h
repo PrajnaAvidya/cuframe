@@ -102,6 +102,7 @@ public:
                              ResizeMode mode = ResizeMode::LETTERBOX,
                              float pad_value = 114.0f);
     PipelineBuilder& normalize(std::array<float, 3> mean, std::array<float, 3> std);
+    PipelineBuilder& normalize(const NormParams& params);
     PipelineBuilder& batch(int size);
     PipelineBuilder& pool_size(int n);
     PipelineBuilder& color_matrix(const ColorMatrix& matrix);

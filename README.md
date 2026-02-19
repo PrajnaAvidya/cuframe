@@ -48,7 +48,7 @@ import torch
 pipeline = (cuframe.Pipeline.builder()
     .input("video.mp4")
     .resize(640, 640, cuframe.ResizeMode.LETTERBOX)
-    .normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+    .normalize(cuframe.IMAGENET_NORM)
     .batch(8)
     .build())
 
@@ -67,7 +67,7 @@ for batch in pipeline:
 auto pipeline = cuframe::Pipeline::builder()
     .input("video.mp4")
     .resize(640, 640, cuframe::ResizeMode::LETTERBOX)
-    .normalize({0.485f, 0.456f, 0.406f}, {0.229f, 0.224f, 0.225f})
+    .normalize(cuframe::IMAGENET_NORM)
     .batch(8)
     .build();
 
@@ -84,7 +84,7 @@ while (auto batch = pipeline.next()) {
 auto pipeline = cuframe::Pipeline::builder()
     .input("video.mp4")
     .resize(224, 224)
-    .normalize({0.485f, 0.456f, 0.406f}, {0.229f, 0.224f, 0.225f})
+    .normalize(cuframe::IMAGENET_NORM)
     .batch(16)
     .temporal_stride(4)
     .build();
@@ -103,7 +103,7 @@ auto batch = pipeline.next();
 pipeline = (cuframe.Pipeline.builder()
     .input("video.mp4")
     .resize(224, 224)
-    .normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+    .normalize(cuframe.IMAGENET_NORM)
     .batch(16)
     .temporal_stride(4)
     .build())
@@ -124,7 +124,7 @@ for pipelines that need to crop regions from the original frame after first-stag
 auto pipeline = cuframe::Pipeline::builder()
     .input("video.mp4")
     .resize(640, 640, cuframe::ResizeMode::LETTERBOX)
-    .normalize({0, 0, 0}, {1, 1, 1})       // YOLO: pixel/255
+    .normalize(cuframe::YOLO_NORM)           // YOLO: pixel/255
     .retain_decoded(true)                    // keep NV12 for ROI cropping
     .batch(1)
     .build();
@@ -178,7 +178,7 @@ for production workloads processing videos that may be corrupt or truncated, ena
 auto pipeline = cuframe::Pipeline::builder()
     .input("maybe_corrupt.mp4")
     .resize(640, 640)
-    .normalize({0.485f, 0.456f, 0.406f}, {0.229f, 0.224f, 0.225f})
+    .normalize(cuframe::IMAGENET_NORM)
     .batch(8)
     .error_policy(cuframe::ErrorPolicy::SKIP)
     .on_error([](const cuframe::ErrorInfo& e) {
@@ -196,7 +196,7 @@ printf("total errors: %zu\n", pipeline.error_count());
 pipeline = (cuframe.Pipeline.builder()
     .input("maybe_corrupt.mp4")
     .resize(640, 640)
-    .normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+    .normalize(cuframe.IMAGENET_NORM)
     .batch(8)
     .error_policy(cuframe.ErrorPolicy.SKIP)
     .on_error(lambda e: print(f"skipped: {e.message}"))
@@ -349,12 +349,14 @@ cuframe/
 │   ├── classification_pipeline.cpp  # C++ classification example
 │   ├── two_stage_pipeline.cpp       # C++ two-stage example
 │   ├── temporal_pipeline.cpp        # C++ temporal stride + seek example
+│   ├── error_recovery.cpp           # C++ error recovery with SKIP policy
 │   ├── tensorrt_inference.cpp       # TensorRT integration (pseudocode)
 │   ├── onnxruntime_inference.cpp    # ONNX Runtime integration (pseudocode)
 │   └── python/
 │       ├── basic_pipeline.py        # Python pipeline + DLPack
 │       ├── two_stage_pipeline.py    # detect → crop → classify
 │       ├── temporal_pipeline.py     # temporal stride + seek
+│       ├── error_recovery.py        # error recovery with SKIP policy
 │       └── ort_inference.py         # ORT io_binding (no torch needed)
 ├── docs/
 │   └── api.md                       # API reference (Python + C++)
