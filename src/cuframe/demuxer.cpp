@@ -51,9 +51,10 @@ Demuxer::Demuxer(const std::string& filepath) {
     // nvdec parser expects annex-b format (start code prefixed NALUs).
     // mp4/mkv/flv containers store h264/hevc in AVCC format (length prefixed).
     // apply bitstream filter to convert.
-    const char* fmt_name = fmt_ctx_->iformat->long_name;
-    bool is_mp4_like = (strstr(fmt_name, "QuickTime") || strstr(fmt_name, "Matroska")
-                        || strstr(fmt_name, "FLV"));
+    const char* fmt_name = fmt_ctx_->iformat->name;
+    // canonical: "mov,mp4,m4a,3gp,3g2,mj2", "matroska,webm", "flv"
+    bool is_mp4_like = (strstr(fmt_name, "mov") || strstr(fmt_name, "matroska")
+                        || strstr(fmt_name, "flv"));
 
     const char* bsf_name = nullptr;
     if (is_mp4_like && info_.codec_id == AV_CODEC_ID_H264)
@@ -103,7 +104,7 @@ bool Demuxer::read_packet(AVPacket* packet) {
 
                 bsf_ret = av_bsf_receive_packet(bsf_ctx_, packet);
                 if (bsf_ret == AVERROR(EAGAIN))
-                    return read_packet(packet);
+                    continue;
                 if (bsf_ret < 0) {
                     char errbuf[AV_ERROR_MAX_STRING_SIZE];
                     av_strerror(bsf_ret, errbuf, sizeof(errbuf));
