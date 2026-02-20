@@ -19,6 +19,8 @@ FramePool::FramePool(size_t frame_size_bytes, int count)
 
 FramePool::~FramePool() = default;
 
+// not thread-safe — relies on NVDEC calling display callback synchronously
+// within cuvidParseVideoData, so acquire/release never race.
 PooledBuffer FramePool::acquire() {
     if (free_list_.empty()) return PooledBuffer(nullptr, PoolDeleter{this});
 
