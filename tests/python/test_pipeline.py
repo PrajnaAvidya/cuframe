@@ -265,3 +265,30 @@ def test_temporal_stride_with_dlpack():
     assert tensor.shape == (batch.count, 3, 224, 224)
     assert tensor.dtype == torch.float32
     assert tensor.device.type == "cuda"
+
+
+def test_threaded_pipelines():
+    """GIL release in next() allows concurrent pipelines on separate threads"""
+    import threading
+
+    results = [0, 0]
+
+    def run_pipeline(idx):
+        p = cuframe.Pipeline.builder() \
+            .input(VIDEO) \
+            .resize(320, 320) \
+            .batch(8) \
+            .build()
+        for batch in p:
+            results[idx] += batch.count
+
+    t0 = threading.Thread(target=run_pipeline, args=(0,))
+    t1 = threading.Thread(target=run_pipeline, args=(1,))
+    t0.start()
+    t1.start()
+    t0.join(timeout=30)
+    t1.join(timeout=30)
+    assert not t0.is_alive()
+    assert not t1.is_alive()
+    assert results[0] == 90
+    assert results[1] == 90

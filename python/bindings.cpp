@@ -262,7 +262,11 @@ NB_MODULE(_cuframe, m) {
         .def_static("builder", &cuframe::Pipeline::builder)
         .def("next", [](nb::object self_obj) -> nb::object {
             auto& self = nb::cast<cuframe::Pipeline&>(self_obj);
-            auto batch = self.next();
+            std::optional<std::shared_ptr<cuframe::GpuFrameBatch>> batch;
+            {
+                nb::gil_scoped_release release;
+                batch = self.next();
+            }
             if (!batch) return nb::none();
             return nb::cast(PyBatch{self_obj, *batch, self.config().device_id});
         })
@@ -272,7 +276,11 @@ NB_MODULE(_cuframe, m) {
         }, nb::rv_policy::reference)
         .def("__next__", [](nb::object self_obj) -> PyBatch {
             auto& self = nb::cast<cuframe::Pipeline&>(self_obj);
-            auto batch = self.next();
+            std::optional<std::shared_ptr<cuframe::GpuFrameBatch>> batch;
+            {
+                nb::gil_scoped_release release;
+                batch = self.next();
+            }
             if (!batch) throw nb::stop_iteration();
             return PyBatch{self_obj, *batch, self.config().device_id};
         })
