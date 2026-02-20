@@ -259,6 +259,46 @@ test conditions: 1280x696 H.264 live action clip, 24fps, ~1460 frames, RTX 3080.
 
 preprocessing is 20-30x faster with cuframe. end-to-end speedup is 1.5-1.9x because inference time dominates — but preprocessing drops from ~35% of frame time to <3%, eliminating it as a bottleneck. the CPU path also pays ~0.4ms cudaMemcpy per frame that cuframe avoids via zero-copy.
 
+## accuracy
+
+cuframe's GPU preprocessing pipeline (NVDEC → NV12→RGB fused kernel → letterbox → normalize) is compared against an OpenCV CPU reference (software decode → BGR → cvtColor → resize → /255) using the same ONNX model and video.
+
+### preprocessed tensor comparison
+
+preprocessed tensor (NCHW float32, [0,1]) produced by cuframe GPU vs OpenCV CPU, per-pixel absolute error across 200 frames:
+
+| video | codec | resolution | color matrix | mean error | max error | PSNR |
+|-------|-------|------------|--------------|------------|-----------|------|
+| live action | H.264 | 1280×696 | BT.601 | 0.018 (4.6/255) | 0.071 (18.2/255) | 31.3 dB |
+| live action | HEVC 8-bit | 1280×696 | BT.601 | 0.017 (4.4/255) | 0.073 (18.5/255) | 31.4 dB |
+| live action | VP9 | 1280×696 | BT.601 | 0.017 (4.4/255) | 0.073 (18.5/255) | 31.4 dB |
+| live action | HEVC 10-bit | 1280×696 | BT.601 | 0.015 (3.9/255) | 0.080 (20.5/255) | 32.3 dB |
+| synthetic | H.264 | 1920×1080 | BT.709 | 0.037 (9.4/255) | 0.207 (52.8/255) | 23.3 dB |
+
+source of delta: NVDEC hardware decode and OpenCV software decode use different YCbCr→RGB color matrices. cuframe auto-selects BT.601 for ≤720 lines and BT.709 for >720 lines; OpenCV's decoder applies its own fixed matrix. for real-world content, this produces ~4–5/255 mean error. the synthetic 1080p row is a worst case, fully saturated test pattern colors are maximally sensitive to matrix differences.
+
+everything else matches exactly: same bilinear interpolation coefficients (pixel-center aligned, matching `cv::INTER_LINEAR`), same letterbox geometry (`min(dst_w/src_w, dst_h/src_h)` with pad=114), same normalization (pixel/255).
+
+### model output comparison
+
+same video, same model, same inputs as above (YOLO26n-pose). detections filtered at conf > 0.25, boxes matched greedily by IoU:
+
+| video | codec | GPU dets | CPU dets | matched | mean IoU | score MAE |
+|-------|-------|----------|----------|---------|----------|-----------|
+| live action | H.264 | 401 | 401 | 400 | 0.989 | 0.017 |
+| live action | HEVC 8-bit | 411 | 412 | 409 | 0.990 | 0.009 |
+| live action | VP9 | 415 | 410 | 409 | 0.990 | 0.006 |
+| live action | HEVC 10-bit | 413 | 413 | 407 | 0.989 | 0.013 |
+
+classification (YOLO26n-cls, 200 frames, center-crop 224×224):
+
+| video | codec | top-1 agreement | top-5 agreement | score MAE |
+|-------|-------|-----------------|-----------------|-----------|
+| live action | H.264 | 200/200 (100%) | 200/200 (100%) | 0.000058 |
+| live action | HEVC 10-bit | 189/200 (94%) | 188/200 (94%) | 0.000145 |
+
+for real-world video, cuframe GPU preprocessing produces model outputs effectively identical to an OpenCV CPU reference. box IoU > 0.989, classification top-1 agreement ≥ 94%, score differences in the third decimal place.
+
 ## build
 
 ### requirements
