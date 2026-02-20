@@ -45,6 +45,7 @@ struct Pipeline::Impl {
     // intermediate GPU buffers (allocated once at build, reused per batch)
     std::vector<float*> rgb_bufs;   // only for separate path with resize
     std::vector<float*> out_bufs;   // preprocessed output, one per batch slot
+    std::vector<const float*> batch_ptrs;  // reused in next() for batch_frames()
 
     // retained NV12 (only when config.retain_decoded)
     bool retained_allocated = false;
@@ -264,6 +265,8 @@ void Pipeline::crop_rois(int batch_idx,
 }
 
 const RetainedFrame& Pipeline::retained_frame(int i) const {
+    if (i < 0 || i >= impl_->retained_count_)
+        throw std::out_of_range("retained_frame: index out of range");
     return impl_->retained_meta[i];
 }
 
@@ -416,10 +419,9 @@ std::optional<std::shared_ptr<GpuFrameBatch>> Pipeline::next() {
     }
 
     // copy preprocessed frames into contiguous batch
-    std::vector<const float*> ptrs(collected);
     for (int i = 0; i < collected; ++i)
-        ptrs[i] = s.out_bufs[i];
-    batch_frames(*batch, ptrs.data(), collected, s.preprocess_stream);
+        s.batch_ptrs[i] = s.out_bufs[i];
+    batch_frames(*batch, s.batch_ptrs.data(), collected, s.preprocess_stream);
 
     // record event when batch GPU work completes
     CUFRAME_CUDA_CHECK(cudaEventRecord(s.batch_ready, s.preprocess_stream));
@@ -631,8 +633,9 @@ Pipeline PipelineBuilder::build() {
     impl->batch_ready = batch_ready;
     impl->rgb_bufs = std::move(rgb_bufs);
     impl->out_bufs = std::move(out_bufs);
+    impl->batch_ptrs.resize(impl->config.batch_size);
     impl->batch_pool = std::move(batch_pool);
-    impl->pending.reserve(config_.batch_size * std::min(config_.temporal_stride, 4));
+    impl->pending.reserve(impl->config.batch_size * std::min(impl->config.temporal_stride, 4));
     impl->packet = av_packet_alloc();
 
     Pipeline p;
