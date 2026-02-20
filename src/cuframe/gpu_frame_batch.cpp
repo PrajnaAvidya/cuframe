@@ -7,7 +7,7 @@ namespace cuframe {
 
 GpuFrameBatch::GpuFrameBatch(int n, int c, int h, int w)
     : buffer_(static_cast<size_t>(n) * c * h * w * sizeof(float)),
-      n_(n), c_(c), h_(h), w_(w), count_(n) {}
+      n_(n), c_(c), h_(h), w_(w), count_(0) {}
 
 float* GpuFrameBatch::data() const {
     return static_cast<float*>(buffer_.data());
@@ -54,7 +54,6 @@ void batch_frames(
             stream
         ));
     }
-    CUFRAME_CUDA_CHECK(cudaGetLastError());
     CUFRAME_NVTX_POP();
 }
 

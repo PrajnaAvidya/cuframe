@@ -13,6 +13,7 @@ TEST(GpuFrameBatchTest, Construction) {
     EXPECT_NE(batch.data(), nullptr);
     EXPECT_EQ(batch.frame_size_bytes(), 3 * 640 * 640 * sizeof(float));
     EXPECT_EQ(batch.total_size_bytes(), 4 * 3 * 640 * 640 * sizeof(float));
+    EXPECT_EQ(batch.count(), 0);
 }
 
 TEST(GpuFrameBatchTest, FrameOffsets) {

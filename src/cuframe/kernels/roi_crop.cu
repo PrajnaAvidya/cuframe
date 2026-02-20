@@ -19,7 +19,7 @@ struct RoiCropParams {
     bool bgr, is_10bit;
 };
 
-__global__ void roi_crop_batch_kernel(RoiCropParams p) {
+__global__ void __launch_bounds__(256, 6) roi_crop_batch_kernel(RoiCropParams p) {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
     int roi_idx = blockIdx.z;

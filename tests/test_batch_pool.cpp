@@ -70,9 +70,8 @@ TEST(BatchPoolTest, PartialBatchCount) {
     auto batch = pool.acquire();
     ASSERT_NE(batch, nullptr);
 
-    // initially count == batch_size (full batch)
-    EXPECT_EQ(batch->count(), batch->batch_size());
-    EXPECT_EQ(batch->count(), 8);
+    // fresh batch starts with count 0 (no valid frames yet)
+    EXPECT_EQ(batch->count(), 0);
 
     // set partial count
     batch->set_count(3);
