@@ -287,6 +287,10 @@ std::optional<std::shared_ptr<GpuFrameBatch>> Pipeline::next() {
     int collected = 0;
 
     while (collected < s.config.batch_size) {
+        // ensure decoder D2D copies are visible to preprocess stream
+        CUFRAME_CUDA_CHECK(cudaStreamWaitEvent(s.preprocess_stream,
+                                                s.decoder->copy_done_event(), 0));
+
         // consume pending decoded frames
         while (s.pending_idx < static_cast<int>(s.pending.size())
                && collected < s.config.batch_size) {

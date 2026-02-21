@@ -27,6 +27,11 @@ Decoder::Decoder(const VideoInfo& info, int pool_count)
     CUFRAME_CU_CHECK(cuCtxGetCurrent(&cu_ctx_));
     CUFRAME_CU_CHECK(cuStreamCreate(&stream_, CU_STREAM_DEFAULT));
 
+    event_pool_.resize(pool_count_);
+    for (auto& ev : event_pool_)
+        CUFRAME_CUDA_CHECK(cudaEventCreateWithFlags(&ev, cudaEventDisableTiming));
+    CUFRAME_CUDA_CHECK(cudaEventCreateWithFlags(&copy_done_, cudaEventDisableTiming));
+
     parser_params_ = {};
     parser_params_.CodecType = to_nvdec_codec(info.codec_id);
     parser_params_.ulMaxNumDecodeSurfaces = 1;
@@ -40,6 +45,7 @@ Decoder::Decoder(const VideoInfo& info, int pool_count)
 }
 
 Decoder::~Decoder() {
+    drain_unmaps(true);
     if (parser_) cuvidDestroyVideoParser(parser_);
     if (stream_) cuStreamDestroy(stream_);
     if (decoder_) {
@@ -47,19 +53,40 @@ Decoder::~Decoder() {
         cuvidDestroyDecoder(decoder_);
         cuCtxPopCurrent(nullptr);
     }
+    for (auto& ev : event_pool_) cudaEventDestroy(ev);
+    if (copy_done_) cudaEventDestroy(copy_done_);
 }
 
 void Decoder::reset() {
-    // discard accumulated frames (releases PooledBuffers back to pool)
+    drain_unmaps(true);
     pending_frames_.clear();
 
-    // destroy and recreate parser — cleanest way to reset all internal state
-    // (NAL buffer, DPB, B-frame reordering, reference frames)
     if (parser_) {
         cuvidDestroyVideoParser(parser_);
         parser_ = nullptr;
     }
     CUFRAME_CU_CHECK(cuvidCreateVideoParser(&parser_, &parser_params_));
+    event_pool_idx_ = 0;
+}
+
+void Decoder::drain_unmaps(bool force) {
+    auto it = pending_unmaps_.begin();
+    while (it != pending_unmaps_.end()) {
+        if (!force) {
+            cudaError_t status = cudaEventQuery(it->event);
+            if (status == cudaErrorNotReady) break;
+        }
+        cuCtxPushCurrent(cu_ctx_);
+        cuvidUnmapVideoFrame(decoder_, it->ptr);
+        cuCtxPopCurrent(nullptr);
+        it = pending_unmaps_.erase(it);
+    }
+}
+
+cudaEvent_t Decoder::acquire_event() {
+    cudaEvent_t ev = event_pool_[event_pool_idx_];
+    event_pool_idx_ = (event_pool_idx_ + 1) % static_cast<int>(event_pool_.size());
+    return ev;
 }
 
 void Decoder::decode(const AVPacket* packet, std::vector<DecodedFrame>& out) {
@@ -105,6 +132,7 @@ void Decoder::flush(std::vector<DecodedFrame>& out) {
 int Decoder::width() const { return width_; }
 int Decoder::height() const { return height_; }
 CUstream Decoder::stream() const { return stream_; }
+cudaEvent_t Decoder::copy_done_event() const { return copy_done_; }
 
 // --- callbacks ---
 
@@ -112,6 +140,7 @@ int Decoder::on_sequence(CUVIDEOFORMAT* fmt) {
     try {
         // resolution change mid-stream: tear down old decoder + pool
         if (decoder_) {
+            drain_unmaps(true);
             pool_.reset();
             cuCtxPushCurrent(cu_ctx_);
             cuvidDestroyDecoder(decoder_);
@@ -136,7 +165,9 @@ int Decoder::on_sequence(CUVIDEOFORMAT* fmt) {
             ? cudaVideoDeinterlaceMode_Weave
             : cudaVideoDeinterlaceMode_Adaptive;
         ci.ulNumDecodeSurfaces = fmt->min_num_decode_surfaces;
-        ci.ulNumOutputSurfaces = 2;
+        // deferred unmap can hold multiple surfaces mapped simultaneously
+        // during on_display bursts. need enough output surfaces to cover.
+        ci.ulNumOutputSurfaces = fmt->min_num_decode_surfaces;
         ci.ulCreationFlags = cudaVideoCreate_PreferCUVID;
         ci.ulWidth = fmt->coded_width;
         ci.ulHeight = fmt->coded_height;
@@ -171,6 +202,7 @@ int Decoder::on_decode(CUVIDPICPARAMS* pic) {
 
 int Decoder::on_display(CUVIDPARSERDISPINFO* disp) {
     if (!disp) return 1;  // null = EOS notification
+    drain_unmaps(false);
 
     CUVIDPROCPARAMS map_params = {};
     map_params.progressive_frame = disp->progressive_frame;
@@ -221,12 +253,13 @@ int Decoder::on_display(CUVIDPARSERDISPINFO* disp) {
         cp.Height = chroma_height;
         CUFRAME_CU_CHECK(cuMemcpy2DAsync(&cp, stream_));
 
-        // cuvidUnmapVideoFrame requires the copy to be complete before returning
-        // the surface to NVDEC's pool. this serializes decode+copy per frame.
-        // a deferred-unmap approach (record event, unmap when frame consumed)
-        // would allow overlapping copies but requires FramePool lifecycle changes.
-        CUFRAME_CU_CHECK(cuStreamSynchronize(stream_));
-        CUFRAME_CU_CHECK(cuvidUnmapVideoFrame(decoder_, src_ptr));
+        // defer unmap — record event after copy, drain completed unmaps later.
+        // copy_done_ lets downstream streams sync without blocking the CPU.
+        cudaEvent_t ev = acquire_event();
+        CUFRAME_CUDA_CHECK(cudaEventRecord(ev, stream_));
+        CUFRAME_CUDA_CHECK(cudaEventRecord(copy_done_, stream_));
+        pending_unmaps_.push_back({src_ptr, ev});
+        src_ptr = 0;  // prevent catch block from double-unmapping
 
         cuCtxPopCurrent(nullptr);
 

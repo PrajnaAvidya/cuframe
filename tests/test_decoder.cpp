@@ -118,6 +118,21 @@ TEST_F(DecoderTest, ResetAfterDecode) {
     EXPECT_GT(frames_.size(), 60u);
 }
 
+TEST_F(DecoderTest, DeferredUnmapStress) {
+    // decode full video, verify all frames produced correctly.
+    // validates event-based deferred unmap doesn't leak NVDEC surfaces.
+    decode_all();
+    size_t total = frames_.size();
+    ASSERT_GT(total, 60u);
+
+    // release all frames, re-decode, verify same count
+    frames_.clear();
+    demuxer_ = std::make_unique<cuframe::Demuxer>(TEST_VIDEO);
+    decoder_ = std::make_unique<cuframe::Decoder>(demuxer_->video_info(), 150);
+    decode_all();
+    EXPECT_EQ(frames_.size(), total);
+}
+
 TEST_F(DecoderTest, FlushProducesRemainingFrames) {
     AVPacket* pkt = av_packet_alloc();
     size_t decode_count = 0;

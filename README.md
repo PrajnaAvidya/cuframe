@@ -31,7 +31,7 @@ GPU video preprocessing library. Decodes video and produces inference-ready tens
 
 ## why
 
-most GPU video preprocessing pipelines require stitching together separate libraries for decode, color conversion, resize, and normalization. each launching its own kernel with its own intermediate buffers. cuframe does all of this in a single fused CUDA kernel pass directly from NVDEC's NV12 output. no existing tool does this, including NVIDIA's DALI and CV-CUDA. preprocessing cost drops to ~0.12ms per frame, and the pipeline runs at ~95% of the NVDEC hardware ceiling.
+most GPU video preprocessing pipelines require stitching together separate libraries for decode, color conversion, resize, and normalization. each launching its own kernel with its own intermediate buffers. cuframe does all of this in a single fused CUDA kernel pass directly from NVDEC's NV12 output. no existing tool does this, including NVIDIA's DALI and CV-CUDA. preprocessing adds <1% overhead vs raw NVDEC decode.
 
 ## quickstart
 
@@ -233,15 +233,16 @@ print(f"total errors: {pipeline.error_count}")
 
 ## benchmark
 
-1920x1080 H.264 → 640x640 NCHW float32, batch size 8, ImageNet normalization:
+1920x1080 H.264 → 640x640 NCHW float32, batch size 8, ImageNet normalization. RTX 3080, 16k frames real video content (11 min H.264 TV episode):
 
-| path | fps | vs CPU |
-|------|-----|--------|
-| cuframe pipeline (multi-stream) | 684 | 9.8x |
-| cuframe raw fused kernels | 730 | 10.4x |
-| CPU baseline (ffmpeg + sws_scale + cudaMemcpy) | 70 | — |
+| path | fps |
+|------|-----|
+| cuframe pipeline | 768 |
+| raw fused kernels (no pipeline) | 766 |
+| decode only (no preprocessing) | 757 |
+| [NVIDIA published NVDEC spec](https://docs.nvidia.com/video-technologies/video-codec-sdk/13.0/nvdec-application-note/index.html) (Ampere, 1080p H.264) | 748 |
 
-debug build, 300 frames synthetic content, RTX 3080 (~717 fps estimated NVDEC ceiling for 1080p H.264). pipeline operates at ~95% of hardware decode limit so preprocessing overhead is effectively zero. fused kernel eliminates 2 intermediate buffers and ~2.5x memory traffic vs separate kernels.
+preprocessing adds <1% overhead vs decode-only throughput. the pipeline is NVDEC-bottlenecked and fused kernel preprocessing is effectively free. pipeline slightly exceeds decode-only due to multi-stream prefetch overlap (CPU feeds packets while GPU finishes the current batch). exceeding the NVIDIA spec is expected as their published number is a conservative baseline across content types.
 
 ### end-to-end inference
 

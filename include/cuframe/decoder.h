@@ -10,8 +10,14 @@
 #include <vector>
 #include <cstdint>
 #include <exception>
+#include <cuda_runtime.h>
 
 namespace cuframe {
+
+struct PendingUnmap {
+    CUdeviceptr ptr;
+    cudaEvent_t event;
+};
 
 struct DecodedFrame {
     PooledBuffer buffer;    // borrows NV12/P016 data from pool, auto-returns
@@ -46,6 +52,11 @@ public:
     int height() const;
     CUstream stream() const;
 
+    // event recorded after each D2D copy in on_display.
+    // downstream streams should cudaStreamWaitEvent on this before
+    // reading decoded frame data.
+    cudaEvent_t copy_done_event() const;
+
 private:
     // static callback trampolines — cast user_data back to this
     static int CUDAAPI handle_sequence(void* user_data, CUVIDEOFORMAT* fmt);
@@ -75,6 +86,15 @@ private:
     // so throwing through them is UB. instead, catch and store here, rethrow after
     // cuvidParseVideoData returns.
     std::exception_ptr stored_error_;
+
+    // deferred unmap — record event after D2D copy, unmap when event completes
+    void drain_unmaps(bool force);
+    cudaEvent_t acquire_event();
+
+    std::vector<PendingUnmap> pending_unmaps_;
+    std::vector<cudaEvent_t> event_pool_;
+    int event_pool_idx_ = 0;
+    cudaEvent_t copy_done_ = nullptr;  // latest D2D copy completion
 };
 
 // map ffmpeg codec id to nvdec codec enum. throws on unsupported codec.
