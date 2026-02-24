@@ -1029,6 +1029,32 @@ TEST(PipelineTest, CropRois_ZeroRois) {
 }
 
 // ============================================================================
+// crop_rois — exceeding gridDim.z limit throws
+// ============================================================================
+
+TEST(PipelineTest, CropRois_GridDimZLimit) {
+    if (!test_video_exists()) GTEST_SKIP() << "test video not found";
+
+    auto pipeline = cuframe::Pipeline::builder()
+        .input(TEST_VIDEO)
+        .retain_decoded(true)
+        .batch(1)
+        .build();
+
+    auto batch = pipeline.next();
+    ASSERT_TRUE(batch.has_value());
+
+    cuframe::BatchPool pool(1, 1, 3, 64, 64);
+    auto crops = pool.acquire();
+
+    // 65536 exceeds CUDA gridDim.z limit of 65535
+    cuframe::Rect roi{0, 0, 10, 10};
+    EXPECT_THROW(
+        pipeline.crop_rois(0, &roi, 65536, *crops, cuframe::IMAGENET_NORM),
+        std::invalid_argument);
+}
+
+// ============================================================================
 // seek — to start produces all frames
 // ============================================================================
 

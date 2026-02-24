@@ -2,6 +2,7 @@
 #include "cuframe/nvtx.h"
 #include "cuframe/cuda_utils.h"
 #include <stdexcept>
+#include <string>
 
 namespace cuframe {
 
@@ -44,6 +45,10 @@ void batch_frames(
     int n,
     cudaStream_t stream
 ) {
+    if (n > batch.batch_size())
+        throw std::invalid_argument(
+            "batch_frames: n (" + std::to_string(n) +
+            ") exceeds batch capacity (" + std::to_string(batch.batch_size()) + ")");
     CUFRAME_NVTX_PUSH("cuframe::batch");
     for (int i = 0; i < n; ++i) {
         CUFRAME_CUDA_CHECK(cudaMemcpyAsync(

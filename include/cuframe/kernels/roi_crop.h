@@ -17,6 +17,8 @@ struct Rect {
 // rois: host-side array of bounding boxes in source pixel coordinates.
 // output: device pointer with space for num_rois * 3 * dst_h * dst_w floats.
 // color/norm: same as fused_nv12_to_tensor.
+// num_rois must be <= 65535 (CUDA gridDim.z limit).
+// pipeline.crop_rois() validates this; standalone callers must check.
 void roi_crop_batch(
     const uint8_t* nv12_ptr,
     int src_w, int src_h, unsigned int src_pitch,

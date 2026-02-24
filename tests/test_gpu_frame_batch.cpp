@@ -76,6 +76,23 @@ TEST(GpuFrameBatchTest, MoveConstruct) {
     EXPECT_EQ(a.data(), nullptr);
 }
 
+TEST(GpuFrameBatchTest, BatchFramesOverflowThrows) {
+    const int c = 3, h = 4, w = 4;
+    const size_t frame_bytes = c * h * w * sizeof(float);
+
+    cuframe::GpuFrameBatch batch(2, c, h, w);
+
+    // allocate 3 frame pointers but batch only holds 2
+    std::vector<float*> d_frames(3);
+    for (int i = 0; i < 3; ++i)
+        CUFRAME_CUDA_CHECK(cudaMalloc(&d_frames[i], frame_bytes));
+
+    std::vector<const float*> ptrs(d_frames.begin(), d_frames.end());
+    EXPECT_THROW(cuframe::batch_frames(batch, ptrs.data(), 3), std::invalid_argument);
+
+    for (int i = 0; i < 3; ++i) cudaFree(d_frames[i]);
+}
+
 TEST(GpuFrameBatchTest, StreamExecution) {
     cudaStream_t stream;
     CUFRAME_CUDA_CHECK(cudaStreamCreate(&stream));

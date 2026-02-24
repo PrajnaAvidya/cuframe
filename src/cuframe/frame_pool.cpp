@@ -1,4 +1,6 @@
 #include "cuframe/frame_pool.h"
+#include <algorithm>
+#include <cassert>
 
 namespace cuframe {
 
@@ -30,6 +32,9 @@ PooledBuffer FramePool::acquire() {
 }
 
 void FramePool::release(DeviceBuffer* buf) {
+    assert(std::any_of(all_buffers_.begin(), all_buffers_.end(),
+        [buf](const auto& owned) { return owned.get() == buf; })
+        && "FramePool::release: buffer does not belong to this pool");
     free_list_.push_back(buf);
 }
 

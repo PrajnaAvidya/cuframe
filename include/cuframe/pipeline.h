@@ -120,6 +120,8 @@ private:
     PipelineConfig config_;
 };
 
+// not thread-safe. do not call next() and seek() concurrently.
+// separate Pipeline instances on separate threads are independent.
 class Pipeline {
 public:
     static PipelineBuilder builder();

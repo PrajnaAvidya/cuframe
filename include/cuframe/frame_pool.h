@@ -20,6 +20,8 @@ using PooledBuffer = std::unique_ptr<DeviceBuffer, PoolDeleter>;
 // pre-allocated pool of fixed-size gpu buffers. acquire() lends a buffer
 // wrapped in a PooledBuffer that auto-returns on destruction.
 // all PooledBuffers must be destroyed before the pool.
+// not thread-safe. used internally by Decoder — relies on NVDEC calling
+// display callbacks synchronously within cuvidParseVideoData.
 class FramePool {
 public:
     FramePool(size_t frame_size_bytes, int count);

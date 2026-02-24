@@ -8,6 +8,7 @@
 
 namespace cuframe {
 
+// thread-safe. acquire/try_acquire/release are safe from any thread.
 class BatchPool {
 public:
     // pre-allocate pool_size batches, each max_batch x c x h x w float32

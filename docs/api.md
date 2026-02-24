@@ -759,6 +759,22 @@ for production use with potentially corrupt video, see `ErrorPolicy::SKIP` in th
 
 ---
 
+## thread safety
+
+**Pipeline** — single-threaded. do not call `next()` and `seek()` concurrently. separate `Pipeline` instances on separate threads are fully independent (different decoder, stream, pool).
+
+**BatchPool** — thread-safe. `acquire()`, `try_acquire()`, and the shared_ptr release path are safe to call from any thread. uses atomic compare-exchange for the fast path, mutex + condition variable for the blocking path.
+
+**GpuFrameBatch** — the batch itself is not thread-safe (no concurrent reads/writes to `set_count()`). however, the `shared_ptr` wrapper returned by `BatchPool` is thread-safe for refcount operations. safe pattern: move or copy the `shared_ptr` to an inference thread, let it drop when done.
+
+**FramePool / PooledBuffer** — not thread-safe. used internally by the decoder. relies on NVDEC calling display callbacks synchronously within `cuvidParseVideoData`, so acquire/release never race. do not use standalone in multi-threaded contexts.
+
+**Demuxer / Decoder** — not thread-safe. each instance should be owned by a single thread. the Pipeline handles this internally.
+
+**Python GIL** — `Pipeline.next()` releases the GIL during the blocking CUDA sync, allowing concurrent Python threads. the `on_error` callback re-acquires the GIL before calling into Python. DLPack tensor deleters acquire the GIL when releasing Python references.
+
+---
+
 ## NVTX profiling
 
 ```cpp

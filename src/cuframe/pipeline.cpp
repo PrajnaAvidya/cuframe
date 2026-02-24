@@ -243,6 +243,9 @@ void Pipeline::crop_rois(int batch_idx,
         throw std::logic_error("crop_rois requires retain_decoded(true)");
     if (batch_idx < 0 || batch_idx >= s.retained_count_)
         throw std::out_of_range("crop_rois: batch_idx out of range");
+    if (num_rois > 65535)
+        throw std::invalid_argument(
+            "crop_rois: num_rois exceeds CUDA gridDim.z limit of 65535");
 
     auto& frame = s.retained_meta[batch_idx];
     roi_crop_batch(
