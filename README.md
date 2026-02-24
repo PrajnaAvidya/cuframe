@@ -300,6 +300,22 @@ classification (YOLO26n-cls, 200 frames, center-crop 224×224):
 
 for real-world video, cuframe GPU preprocessing produces model outputs effectively identical to an OpenCV CPU reference. box IoU > 0.989, classification top-1 agreement ≥ 94%, score differences in the third decimal place.
 
+## design decisions
+
+brief notes on key architectural choices. see the [API reference](docs/api.md) for full documentation.
+
+**fused kernel** — NV12 color conversion, bilinear resize, and normalization are combined into a single CUDA kernel pass. the pipeline auto-selects the fused path when both resize (or center crop) and normalize are configured. this eliminates two intermediate GPU buffers and ~2.5x memory traffic vs separate kernels. the fallback (separate kernels) is used for color-convert-only or normalize-only configurations.
+
+**stored exception pattern** — NVDEC invokes C++ callbacks from C code. throwing C++ exceptions through C stack frames is undefined behavior. cuframe catches exceptions inside callbacks, stores them via `std::exception_ptr`, and re-throws after `cuvidParseVideoData()` returns to C++ context.
+
+**deferred unmap** — after the async D2D copy from NVDEC surfaces to our pool buffers, the NVDEC surface is not immediately unmapped. instead, a CUDA event is recorded and the unmap is deferred until the event signals completion. this allows NVDEC hardware to start decoding the next frame while the copy is still in flight.
+
+**event-based sync** — `Pipeline::next()` uses `cudaEventRecord` + `cudaEventSynchronize` instead of `cudaStreamSynchronize`. this is more composable — downstream inference streams can `cudaStreamWaitEvent(their_stream, pipeline.batch_event())` for GPU-to-GPU synchronization without blocking the CPU.
+
+**DLPack lifetime management** — the Python bindings use a `DLPackContext` that holds both a `shared_ptr<GpuFrameBatch>` (prevents pool return) and a raw `PyObject*` reference to the pipeline (prevents pool destruction). the DLPack deleter manually acquires the GIL via `PyGILState_Ensure` because PyTorch may call the deleter from a non-Python thread.
+
+**bilinear interpolation in RGB space** — the fused kernel converts each of the 4 NV12 neighbor pixels to RGB, then blends. the strictly correct approach is to interpolate in YUV space first, then convert once. the difference is negligible for inference preprocessing (measured <0.1% mAP impact) and the RGB approach avoids an extra conversion step.
+
 ## build
 
 ### requirements

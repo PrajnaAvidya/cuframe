@@ -288,6 +288,8 @@ NB_MODULE(_cuframe, m) {
         .def_prop_ro("source_height", &cuframe::Pipeline::source_height)
         .def_prop_ro("fps", &cuframe::Pipeline::fps)
         .def_prop_ro("frame_count", &cuframe::Pipeline::frame_count)
+        .def_prop_ro("duration", &cuframe::Pipeline::duration)
+        .def_prop_ro("uses_fused_kernel", &cuframe::Pipeline::uses_fused_kernel)
         .def_prop_ro("letterbox_info", [](cuframe::Pipeline& self) {
             return self.letterbox_info();
         })

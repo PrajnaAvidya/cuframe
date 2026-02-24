@@ -146,6 +146,10 @@ public:
     double fps() const;
     int64_t frame_count() const;  // -1 if container doesn't store it
 
+    // total video duration in seconds, or -1.0 if unknown.
+    // computed from frame_count and fps when both are available.
+    double duration() const;
+
     // transform info for mapping output coordinates back to source pixels
     const LetterboxInfo& letterbox_info() const;
 
@@ -162,6 +166,10 @@ public:
     // use with cudaStreamWaitEvent to synchronize external streams against
     // batch completion without coupling to the pipeline's internal stream.
     cudaEvent_t batch_event() const;
+
+    // whether the fused NV12-to-tensor kernel is active for this pipeline.
+    // true when both resize/crop and normalize are configured.
+    bool uses_fused_kernel() const;
 
     // crop regions from retained NV12 frame, resize + normalize into output batch.
     // requires retain_decoded(true). batch_idx is the frame index in the most recent

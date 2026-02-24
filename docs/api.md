@@ -155,6 +155,8 @@ batch = pipeline.next()  # returns None at end
 total = pipeline.frame_count if pipeline.frame_count >= 0 else None
 ```
 
+**`duration`** — total video duration in seconds, or -1.0 if frame count or fps is unavailable. convenience for logging and progress bars.
+
 ### crop_rois — tuple support
 
 `crop_rois` accepts plain tuples `(x, y, w, h)` in addition to `Rect` objects. both can be mixed in the same list:
@@ -183,6 +185,7 @@ pipeline.crop_rois(0, rois, crops, cuframe.YOLO_NORM)
 - `pipeline.seek(seconds)` works the same as C++ (method call, not property)
 - metadata via properties: `pipeline.source_width` (not `pipeline.source_width()`)
 - `pipeline.error_count` is a property (not `pipeline.error_count()`)
+- `pipeline.duration` and `pipeline.uses_fused_kernel` are properties
 - `crop_rois` accepts a list of `Rect` objects or `(x, y, w, h)` tuples
 - `.normalize(mean, std)` takes two lists: `.normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])`
 - `.normalize(params)` accepts a `NormParams` constant directly: `.normalize(cuframe.IMAGENET_NORM)` or `.normalize(cuframe.YOLO_NORM)`
@@ -270,10 +273,12 @@ public:
     int source_height() const;
     double fps() const;
     int64_t frame_count() const;
+    double duration() const;
     const LetterboxInfo& letterbox_info() const;
     size_t error_count() const;
     cudaStream_t stream() const;
     cudaEvent_t batch_event() const;
+    bool uses_fused_kernel() const;
     void crop_rois(int batch_idx, const Rect* rois, int num_rois,
                    GpuFrameBatch& output, const NormParams& norm, bool bgr = false);
     void crop_rois(int batch_idx, const std::vector<Rect>& rois,
@@ -302,6 +307,8 @@ the last batch may be partial: `(*batch)->count()` may be less than `(*batch)->b
 
 **`frame_count()`** — total number of frames in the source video, or -1 if the container doesn't store this information.
 
+**`duration()`** — total video duration in seconds, or -1.0 if frame count or fps is unavailable. convenience for logging and progress bars.
+
 **`letterbox_info()`** — returns the coordinate transform for mapping output pixel coordinates back to source frame coordinates. useful for reversing letterbox/resize/crop transforms on detection boxes.
 
 **`error_count()`** — total number of errors encountered in SKIP mode. cumulative over the pipeline's lifetime — not reset by `seek()`. returns 0 if no errors occurred or if using THROW mode.
@@ -309,6 +316,8 @@ the last batch may be partial: `(*batch)->count()` may be less than `(*batch)->b
 **`stream()`** — returns the pipeline's internal CUDA stream. useful for chaining GPU operations (e.g. running `roi_crop_batch` on the same stream) without a full device sync between pipeline output and downstream kernels. the returned stream is valid for the lifetime of the pipeline.
 
 **`batch_event()`** — returns the CUDA event recorded when the most recent `next()` batch is ready on GPU. use with `cudaStreamWaitEvent(your_stream, pipeline.batch_event())` to synchronize external streams against batch completion without a CPU round-trip. this enables GPU→GPU dependency chains — e.g., an inference stream can wait on the batch event and begin execution as soon as preprocessing finishes, without blocking the host.
+
+**`uses_fused_kernel()`** — whether the fused NV12-to-tensor kernel is active for this pipeline configuration. returns `true` when both resize (or center crop) and normalize are configured. useful for debugging and profiling to confirm which kernel path was selected.
 
 **`crop_rois(batch_idx, rois, num_rois, output, norm, bgr)`** — crop regions from a retained NV12 frame, resize + normalize into an output batch. convenience wrapper around `roi_crop_batch()` that handles frame lookup, color matrix selection, stream management, and count tracking automatically.
 

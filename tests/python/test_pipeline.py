@@ -63,6 +63,35 @@ def test_pipeline_metadata():
     assert pipeline.frame_count > 0
 
 
+def test_pipeline_duration():
+    pipeline = cuframe.Pipeline.builder() \
+        .input(VIDEO) \
+        .batch(1) \
+        .build()
+
+    # 90 frames / 30 fps = 3.0 seconds
+    assert pipeline.duration == pytest.approx(3.0)
+
+
+def test_pipeline_uses_fused_kernel():
+    # resize + normalize → fused
+    fused = cuframe.Pipeline.builder() \
+        .input(VIDEO) \
+        .resize(640, 640) \
+        .normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]) \
+        .batch(1) \
+        .build()
+    assert fused.uses_fused_kernel is True
+
+    # resize only → not fused
+    separate = cuframe.Pipeline.builder() \
+        .input(VIDEO) \
+        .resize(640, 640) \
+        .batch(1) \
+        .build()
+    assert separate.uses_fused_kernel is False
+
+
 def test_pipeline_error():
     with pytest.raises(Exception):
         cuframe.Pipeline.builder().build()

@@ -74,6 +74,8 @@ void Decoder::drain_unmaps(bool force) {
     while (it != pending_unmaps_.end()) {
         if (!force) {
             cudaError_t status = cudaEventQuery(it->event);
+            // events are recorded on stream_ in order, so if event N
+            // isn't ready, N+1 through N+K aren't either. safe to stop.
             if (status == cudaErrorNotReady) break;
         }
         cuCtxPushCurrent(cu_ctx_);

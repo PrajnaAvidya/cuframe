@@ -737,6 +737,47 @@ TEST(PipelineTest, SourceMetadata) {
 }
 
 // ============================================================================
+// duration — computed from frame_count / fps
+// ============================================================================
+
+TEST(PipelineTest, Duration) {
+    if (!test_video_exists()) GTEST_SKIP() << "test video not found";
+
+    auto pipeline = cuframe::Pipeline::builder()
+        .input(TEST_VIDEO)
+        .batch(1)
+        .build();
+
+    // 90 frames / 30 fps = 3.0 seconds
+    EXPECT_DOUBLE_EQ(pipeline.duration(), 3.0);
+}
+
+// ============================================================================
+// uses_fused_kernel — true with resize+normalize, false without normalize
+// ============================================================================
+
+TEST(PipelineTest, UsesFusedKernel) {
+    if (!test_video_exists()) GTEST_SKIP() << "test video not found";
+
+    // resize + normalize → fused
+    auto fused = cuframe::Pipeline::builder()
+        .input(TEST_VIDEO)
+        .resize(DST_W, DST_H)
+        .normalize({0.485f, 0.456f, 0.406f}, {0.229f, 0.224f, 0.225f})
+        .batch(1)
+        .build();
+    EXPECT_TRUE(fused.uses_fused_kernel());
+
+    // resize only → not fused
+    auto separate = cuframe::Pipeline::builder()
+        .input(TEST_VIDEO)
+        .resize(DST_W, DST_H)
+        .batch(1)
+        .build();
+    EXPECT_FALSE(separate.uses_fused_kernel());
+}
+
+// ============================================================================
 // letterbox info — letterbox resize
 // ============================================================================
 

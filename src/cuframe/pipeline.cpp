@@ -195,9 +195,15 @@ int Pipeline::source_width() const { return impl_->demuxer->video_info().width; 
 int Pipeline::source_height() const { return impl_->demuxer->video_info().height; }
 double Pipeline::fps() const { return impl_->demuxer->video_info().fps; }
 int64_t Pipeline::frame_count() const { return impl_->demuxer->video_info().num_frames; }
+double Pipeline::duration() const {
+    auto& info = impl_->demuxer->video_info();
+    if (info.num_frames <= 0 || info.fps <= 0.0) return -1.0;
+    return info.num_frames / info.fps;
+}
 const LetterboxInfo& Pipeline::letterbox_info() const { return impl_->letterbox; }
 cudaStream_t Pipeline::stream() const { return impl_->preprocess_stream; }
 cudaEvent_t Pipeline::batch_event() const { return impl_->batch_ready; }
+bool Pipeline::uses_fused_kernel() const { return impl_->use_fused; }
 size_t Pipeline::error_count() const { return impl_->error_count; }
 
 void Pipeline::seek(double seconds) {
